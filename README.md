@@ -17,6 +17,13 @@ A command-line toolkit of IT, PKI, and SSL/TLS utilities organized as subcommand
   - [PKI & CSR (`ittools csr`)](#pki--csr-ittools-csr)
     - [`csr generate`](#csr-generate)
     - [`csr decode`](#csr-decode)
+  - [PKCS#12 Archives (`ittools pfx`)](#pkcs12-archives-ittools-pfx)
+    - [`pfx create`](#pfx-create)
+    - [`pfx extract`](#pfx-extract)
+  - [ADCS Certificate Services (`ittools adcs`)](#adcs-certificate-services-ittools-adcs)
+    - [`adcs sign`](#adcs-sign)
+    - [`adcs retrieve`](#adcs-retrieve)
+    - [`adcs ca-cert`](#adcs-ca-cert)
   - [Cryptographic Keypairs (`ittools keypair`)](#cryptographic-keypairs-ittools-keypair)
     - [`keypair passphrase`](#keypair-passphrase)
     - [`keypair rsa`](#keypair-rsa)
@@ -61,6 +68,14 @@ To install development dependencies (e.g. `pytest`):
 pip install -e ".[dev]"
 ```
 
+To enable NTLM authentication for Active Directory ADCS enrollment:
+
+```bash
+pip install -e ".[ntlm]"
+# or:
+pip install requests-ntlm
+```
+
 *Note on Debian/Ubuntu/Kali (PEP 668 externally-managed environments):* If installing into system/user Python outside a virtual environment, pass `--break-system-packages`:
 ```bash
 pip install -e . --break-system-packages
@@ -94,7 +109,7 @@ ittools [--debug] <command> <subcommand> [options]
 | `0` | Success | Command completed successfully; checks passed. |
 | `1` | Validation / User Error | Invalid arguments, missing required fields, or output file collision without `--force`. |
 | `2` | Network / Connection Error | Remote host unreachable, DNS lookup failed, or connection timed out. |
-| `3` | Security Warning / Mismatch | Remote SSL certificate expired or expiring within 30 days (`ssl check`), or private key and certificate do not match (`ssl match`). |
+| `3` | Security Warning / Mismatch / Approval Pending | Remote SSL certificate expired or expiring within 30 days (`ssl check`), private key and certificate mismatch (`ssl match`), or ADCS certificate request pending CA administrator approval (`adcs sign`). |
 
 ---
 
@@ -161,6 +176,210 @@ cat output/api.example.com/api.example.com.csr | ittools csr decode
 ```
 
 Displays Common Name, Organization, Country, SANs, Key Type & Size, and Signature Algorithm.
+
+---
+
+### PKCS#12 Archives (`ittools pfx`)
+
+Create and extract PKCS#12 (`.pfx` / `.p12`) archives containing private keys, certificates, and CA certificate bundles using industrial-grade PBES2 AES-256-CBC encryption.
+
+#### `pfx create`
+
+Bundles a private key PEM file and a certificate PEM file (with optional CA certificate chain) into an encrypted or unencrypted `.pfx` container.
+
+```bash
+ittools pfx create --key <key.pem> --cert <cert.pem> [options]
+```
+
+**Options:**
+- `--key KEY`: Path to private key PEM file (required).
+- `--cert CERT`: Path to certificate PEM file (required).
+- `--ca CA`: Path to CA certificate PEM file or bundle to include in the archive.
+- `--out OUT`: Output `.pfx` file path (default: `./output/<cert-stem>.pfx`).
+- `--password PASSWORD`: Password protecting the PFX archive (if omitted and running interactively, prompts securely).
+- `--no-password`: Do not encrypt the PFX container with a password.
+- `--key-password KEY_PASSWORD`: Password to decrypt the input private key if encrypted.
+- `--name NAME`: Friendly name / alias for the certificate inside the archive.
+- `--force`: Overwrite existing output file.
+
+**Examples:**
+```bash
+# Create password-protected PFX bundle with CA chain
+ittools pfx create \
+  --key server.key \
+  --cert server.crt \
+  --ca ca-bundle.crt \
+  --out bundle.pfx \
+  --password "SecretPassword123" \
+  --name "Production Web"
+
+# Create unencrypted PFX archive
+ittools pfx create \
+  --key server.key \
+  --cert server.crt \
+  --out server.pfx \
+  --no-password
+```
+
+#### `pfx extract`
+
+Extracts the private key, leaf certificate, and any bundled CA chain certificates from a PKCS#12 archive into separate PEM files. Extracted private keys are always saved with restrictive `0600` permissions.
+
+```bash
+ittools pfx extract --in <archive.pfx> [options]
+```
+
+**Options:**
+- `--in IN_FILE`: Path to `.pfx` or `.p12` archive file (required).
+- `--password PASSWORD`: Password for the PFX archive (prompts interactively if required).
+- `--out-dir OUT_DIR`: Output directory for extracted components (default: `./output/<pfx-stem>`).
+- `--key-out KEY_OUT`: Custom destination path for extracted private key PEM.
+- `--cert-out CERT_OUT`: Custom destination path for extracted leaf certificate PEM.
+- `--ca-out CA_OUT`: Custom destination path for extracted CA bundle PEM.
+- `--force`: Overwrite existing output files.
+
+**Examples:**
+```bash
+# Extract components to default directory (./output/bundle/)
+ittools pfx extract --in bundle.pfx --password "SecretPassword123"
+# Extracted:
+#   ./output/bundle/bundle.key  (mode 0600)
+#   ./output/bundle/bundle.crt
+#   ./output/bundle/bundle-ca.crt
+
+# Extract with custom output destinations
+ittools pfx extract \
+  --in bundle.pfx \
+  --key-out /etc/ssl/private/app.key \
+  --cert-out /etc/ssl/certs/app.crt \
+  --ca-out /etc/ssl/certs/app-ca.crt \
+  --force
+```
+
+---
+
+### ADCS Certificate Services (`ittools adcs`)
+
+Interact with Microsoft Active Directory Certificate Services (ADCS) Web Enrollment (`/certsrv/certfnsh.asp`) to submit Certificate Signing Requests, retrieve issued certificates, and download the Enterprise CA certificate chain. Supports NTLM and Basic authentication, custom CA bundles, and an all-in-one PFX assembly pipeline.
+
+#### `adcs sign`
+
+Submits a PKCS#10 CSR to ADCS Web Enrollment and retrieves the issued certificate. If the request requires CA administrator approval, the command exits with code `3` and displays the assigned Request ID and the exact command to retrieve it once approved.
+
+Using `--key` and `--out-pfx`, you can automatically combine the private key and newly signed certificate into a ready-to-deploy `.pfx` bundle in a single step.
+
+```bash
+ittools adcs sign --server <server> --csr <csr.pem> [options]
+```
+
+**Options:**
+- `--server SERVER`: ADCS server FQDN or IP address (required, e.g. `ca.corp.local` or `192.168.1.10`).
+- `--csr CSR`: Path to CSR PEM file, or `-` to read from standard input (required).
+- `--template TEMPLATE`: Certificate template name (default: `WebServer`).
+- `--username USERNAME`: Active Directory username (e.g. `CORP\admin` or `admin@corp.local`).
+- `--password PASSWORD`: Active Directory user password (prompts securely if omitted interactively).
+- `--auth {ntlm,basic}`: Authentication method: `ntlm` (default) or `basic`.
+- `--ca-bundle CA_BUNDLE`: Custom CA certificate bundle to verify the ADCS server's HTTPS certificate.
+- `--insecure`: Disable SSL verification for the ADCS server (for self-signed test environments).
+- `--timeout TIMEOUT`: Network timeout in seconds (default: `30.0`).
+- `--out OUT`: Output file path for issued certificate (default: `./output/issued.cer`).
+- `--key KEY`: Path to matching private key file to assemble a PFX bundle.
+- `--out-pfx OUT_PFX`: Output path for assembled PFX archive.
+- `--pfx-password PFX_PASSWORD`: Password to encrypt the assembled PFX archive.
+- `--name NAME`: Friendly name / alias for certificate in PFX.
+- `--force`: Overwrite existing output files.
+
+**Exit Codes:**
+- `0`: Certificate successfully issued (and PFX assembled if requested).
+- `1`: Validation error, rejected CSR, or authentication failure.
+- `2`: Network connection error or timeout.
+- `3`: Certificate request is pending CA administrator approval.
+
+**Examples:**
+```bash
+# Standard certificate issuance
+ittools adcs sign \
+  --server ca.corp.local \
+  --csr output/api.example.com/api.example.com.csr \
+  --template WebServer \
+  --username "CORP\admin" \
+  --out output/api.example.com/api.example.com.cer
+
+# All-in-one: Sign CSR and directly assemble PFX bundle
+ittools adcs sign \
+  --server ca.corp.local \
+  --csr output/api.example.com/api.example.com.csr \
+  --key output/api.example.com/api.example.com.key \
+  --out output/api.example.com/api.example.com.cer \
+  --out-pfx output/api.example.com/api.example.com.pfx \
+  --pfx-password "SecretPassphrase123" \
+  --name "API Server Certificate" \
+  --username "CORP\admin"
+
+# Piping CSR from stdin
+cat server.csr | ittools adcs sign --server ca.corp.local --csr - --username "CORP\admin"
+```
+
+#### `adcs retrieve`
+
+Retrieves a previously submitted certificate from ADCS using its Request ID (e.g., after CA administrator approval). Can also assemble a PFX bundle using `--key` and `--out-pfx`.
+
+```bash
+ittools adcs retrieve --server <server> --req-id <id> [options]
+```
+
+**Options:**
+- `--server SERVER`: ADCS server FQDN or IP address (required).
+- `--req-id REQ_ID`: ADCS Request ID (required).
+- `--username USERNAME`: AD username.
+- `--password PASSWORD`: AD password.
+- `--auth {ntlm,basic}`: Authentication method: `ntlm` (default) or `basic`.
+- `--ca-bundle CA_BUNDLE`: Custom CA certificate bundle.
+- `--insecure`: Disable SSL verification.
+- `--timeout TIMEOUT`: Network timeout in seconds (default: `30.0`).
+- `--out OUT`: Output file path for retrieved certificate (default: `./output/req_<id>.cer`).
+- `--key KEY`: Path to matching private key file to assemble a PFX bundle.
+- `--out-pfx OUT_PFX`: Output path for assembled PFX archive.
+- `--pfx-password PFX_PASSWORD`: Password for assembled PFX archive.
+- `--name NAME`: Friendly name for certificate in PFX.
+- `--force`: Overwrite existing output files.
+
+**Example:**
+```bash
+# Retrieve approved certificate and assemble PFX
+ittools adcs retrieve \
+  --server ca.corp.local \
+  --req-id 1042 \
+  --key server.key \
+  --out server.cer \
+  --out-pfx server.pfx \
+  --pfx-password "SecretPassphrase123" \
+  --username "CORP\admin"
+```
+
+#### `adcs ca-cert`
+
+Downloads the root or issuing CA certificate chain (`.p7b` PKCS#7 format) from Microsoft ADCS Web Enrollment.
+
+```bash
+ittools adcs ca-cert --server <server> [options]
+```
+
+**Options:**
+- `--server SERVER`: ADCS server FQDN or IP address (required).
+- `--username USERNAME`: AD username.
+- `--password PASSWORD`: AD password.
+- `--auth {ntlm,basic}`: Authentication method: `ntlm` (default) or `basic`.
+- `--ca-bundle CA_BUNDLE`: Custom CA certificate bundle.
+- `--insecure`: Disable SSL verification.
+- `--timeout TIMEOUT`: Network timeout in seconds (default: `30.0`).
+- `--out OUT`: Output file path (default: `./output/<server>_ca.p7b`).
+- `--force`: Overwrite existing output file.
+
+**Example:**
+```bash
+ittools adcs ca-cert --server ca.corp.local --username "CORP\admin" --out corp-ca.p7b
+```
 
 ---
 
@@ -432,11 +651,14 @@ ittools/
 │       │   ├── prompt.py        # Interactive terminal prompt utility
 │       │   └── commands/
 │       │       ├── csr.py       # 'ittools csr' commands
+│       │       ├── pfx.py       # 'ittools pfx' commands
+│       │       ├── adcs.py      # 'ittools adcs' commands
 │       │       ├── keypair.py   # 'ittools keypair' commands
 │       │       ├── ssl.py       # 'ittools ssl' commands
 │       │       └── config.py    # 'ittools config' commands
 │       └── core/
-│           ├── pki/             # CSR generation, decoding & key matching
+│           ├── pki/             # CSR generation, decoding, key matching & PFX bundles
+│           ├── adcs/            # Microsoft ADCS Web Enrollment client & exceptions
 │           ├── keypair/         # RSA, SSH, PGP & passphrase generation
 │           ├── ssl_check/       # Remote SSL cert & security header checks
 │           └── config_gen/      # Mozilla TLS config templates & logic
