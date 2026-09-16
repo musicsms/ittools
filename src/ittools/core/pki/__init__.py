@@ -9,6 +9,11 @@ from ittools.core.pki.csr import (
     sanitize_name,
 )
 from ittools.core.pki.matcher import MatchResult, match_key_and_cert
+from ittools.core.pki.pfx import (
+    PFXExtractResult,
+    create_pfx_bundle,
+    extract_pfx_bundle,
+)
 
 __all__ = [
     "CSRSubject",
@@ -19,4 +24,7 @@ __all__ = [
     "sanitize_name",
     "MatchResult",
     "match_key_and_cert",
+    "PFXExtractResult",
+    "create_pfx_bundle",
+    "extract_pfx_bundle",
 ]
