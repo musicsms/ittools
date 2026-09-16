@@ -147,26 +147,30 @@ def handle_pfx_extract(args: argparse.Namespace) -> int:
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if result.private_key_pem:
-        key_dest.parent.mkdir(parents=True, exist_ok=True)
-        flags = os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if args.force else os.O_EXCL)
-        fd = os.open(str(key_dest), flags, 0o600)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(result.private_key_pem)
-        finally:
-            os.chmod(str(key_dest), 0o600)
-        sys.stdout.write(f"Private key extracted to: {key_dest} (mode 0600)\n")
+    try:
+        if result.private_key_pem:
+            key_dest.parent.mkdir(parents=True, exist_ok=True)
+            flags = os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if args.force else os.O_EXCL)
+            fd = os.open(str(key_dest), flags, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(result.private_key_pem)
+            finally:
+                os.chmod(str(key_dest), 0o600)
+            sys.stdout.write(f"Private key extracted to: {key_dest} (mode 0600)\n")
 
-    if result.cert_pem:
-        cert_dest.parent.mkdir(parents=True, exist_ok=True)
-        cert_dest.write_text(result.cert_pem, encoding="utf-8")
-        sys.stdout.write(f"Certificate extracted to: {cert_dest}\n")
+        if result.cert_pem:
+            cert_dest.parent.mkdir(parents=True, exist_ok=True)
+            cert_dest.write_text(result.cert_pem, encoding="utf-8")
+            sys.stdout.write(f"Certificate extracted to: {cert_dest}\n")
 
-    if result.ca_certs_pem:
-        ca_dest.parent.mkdir(parents=True, exist_ok=True)
-        ca_bundle = "".join(c if c.endswith("\n") else c + "\n" for c in result.ca_certs_pem)
-        ca_dest.write_text(ca_bundle, encoding="utf-8")
-        sys.stdout.write(f"CA chain extracted to: {ca_dest}\n")
+        if result.ca_certs_pem:
+            ca_dest.parent.mkdir(parents=True, exist_ok=True)
+            ca_bundle = "".join(c if c.endswith("\n") else c + "\n" for c in result.ca_certs_pem)
+            ca_dest.write_text(ca_bundle, encoding="utf-8")
+            sys.stdout.write(f"CA chain extracted to: {ca_dest}\n")
+    except Exception as exc:
+        sys.stderr.write(f"error: Failed to write extracted file: {exc}\n")
+        return 1
 
     return 0

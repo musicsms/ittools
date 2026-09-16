@@ -385,3 +385,34 @@ def test_cli_pfx_extract_custom_paths(tmp_path):
     assert custom_cert.exists()
     assert custom_ca.exists()
     assert stat.S_IMODE(os.stat(custom_key).st_mode) == 0o600
+
+
+def test_cli_pfx_extract_write_failure(tmp_path, capsys):
+    key_pem, cert_pem = _generate_test_key_and_cert("failwrite.local")
+    key_file = tmp_path / "server.key"
+    cert_file = tmp_path / "server.crt"
+    pfx_file = tmp_path / "server.pfx"
+
+    key_file.write_text(key_pem, encoding="utf-8")
+    cert_file.write_text(cert_pem, encoding="utf-8")
+
+    assert main([
+        "pfx", "create",
+        "--key", str(key_file),
+        "--cert", str(cert_file),
+        "--out", str(pfx_file),
+        "--no-password",
+    ]) == 0
+
+    capsys.readouterr()
+
+    with patch("os.open", side_effect=OSError("Disk write error")):
+        code = main([
+            "pfx", "extract",
+            "--in", str(pfx_file),
+            "--out-dir", str(tmp_path / "out"),
+        ])
+        assert code == 1
+        captured = capsys.readouterr()
+        assert "Failed to write extracted file" in captured.err
+
