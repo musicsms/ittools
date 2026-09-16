@@ -12,11 +12,13 @@ from typing import Sequence
 
 import requests
 
+from ittools.cli.commands.adcs import register_adcs_commands
 from ittools.cli.commands.config import register_config_commands
 from ittools.cli.commands.csr import register_csr_commands
 from ittools.cli.commands.keypair import register_keypair_commands
 from ittools.cli.commands.pfx import register_pfx_commands
 from ittools.cli.commands.ssl import register_ssl_commands
+from ittools.core.adcs.exceptions import ADCSConnectionError
 from ittools.core.keypair.pgp import GPGNotInstalledError
 
 
@@ -40,6 +42,7 @@ def is_network_error(exc: BaseException) -> bool:
         TimeoutError,
         ssl.SSLError,
         requests.RequestException,
+        ADCSConnectionError,
     )
     if isinstance(exc, network_types):
         return True
@@ -78,6 +81,7 @@ def build_parser() -> CLIParser:
     register_ssl_commands(subparsers)
     register_config_commands(subparsers)
     register_pfx_commands(subparsers)
+    register_adcs_commands(subparsers)
 
     return parser
 
