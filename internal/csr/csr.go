@@ -3,7 +3,11 @@
 // generate" command.
 package csr
 
-import "strings"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
 
 // SanitizeName converts a Common Name into a filesystem-safe name, replacing
 // "*" with "wildcard" (e.g. "*.example.com" -> "wildcard.example.com"). It is
@@ -27,4 +31,40 @@ func SplitSANs(raw string) []string {
 		return nil
 	}
 	return sans
+}
+
+// ValidateCommonName returns an error if cn is empty or whitespace-only.
+func ValidateCommonName(cn string) error {
+	if strings.TrimSpace(cn) == "" {
+		return errors.New("common name is required")
+	}
+	return nil
+}
+
+// ValidateCountry returns an error unless country is empty (it's optional)
+// or exactly two ASCII letters, per the X.509 country attribute format.
+func ValidateCountry(country string) error {
+	if country == "" {
+		return nil
+	}
+	if len(country) != 2 {
+		return fmt.Errorf("country must be exactly 2 letters, got %q", country)
+	}
+	for _, r := range country {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
+			return fmt.Errorf("country must contain only letters, got %q", country)
+		}
+	}
+	return nil
+}
+
+// ValidateKeySize returns an error unless bits is one of the supported RSA
+// key sizes.
+func ValidateKeySize(bits int) error {
+	switch bits {
+	case 2048, 3072, 4096:
+		return nil
+	default:
+		return fmt.Errorf("key size must be 2048, 3072, or 4096, got %d", bits)
+	}
 }

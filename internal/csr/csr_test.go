@@ -48,3 +48,52 @@ func TestSplitSANs(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateCommonName(t *testing.T) {
+	if err := ValidateCommonName("example.com"); err != nil {
+		t.Errorf("ValidateCommonName(\"example.com\") = %v, want nil", err)
+	}
+	if err := ValidateCommonName(""); err == nil {
+		t.Error("ValidateCommonName(\"\") = nil, want error")
+	}
+	if err := ValidateCommonName("   "); err == nil {
+		t.Error("ValidateCommonName(\"   \") = nil, want error")
+	}
+}
+
+func TestValidateCountry(t *testing.T) {
+	cases := []struct {
+		name    string
+		country string
+		wantErr bool
+	}{
+		{"empty is valid (optional)", "", false},
+		{"two letters upper", "VN", false},
+		{"two letters lower", "vn", false},
+		{"one letter", "V", true},
+		{"three letters", "VNM", true},
+		{"digits", "12", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateCountry(tc.country)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("ValidateCountry(%q) error = %v, wantErr %v", tc.country, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateKeySize(t *testing.T) {
+	for _, bits := range []int{2048, 3072, 4096} {
+		if err := ValidateKeySize(bits); err != nil {
+			t.Errorf("ValidateKeySize(%d) = %v, want nil", bits, err)
+		}
+	}
+	for _, bits := range []int{1024, 2049, 8192, 0} {
+		if err := ValidateKeySize(bits); err == nil {
+			t.Errorf("ValidateKeySize(%d) = nil, want error", bits)
+		}
+	}
+}
