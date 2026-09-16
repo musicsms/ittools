@@ -365,3 +365,49 @@ def test_cli_debug_flag(capsys):
     assert ret_debug == 1
     captured_debug = capsys.readouterr()
     assert "Traceback" in captured_debug.err
+
+
+def test_cli_csr_generate_no_orphaned_key_on_existing_csr(tmp_path, capsys):
+    out_dir = tmp_path / "output"
+    target_dir = out_dir / "orphan.test.com"
+    target_dir.mkdir(parents=True)
+    existing_csr = target_dir / "orphan.test.com.csr"
+    existing_csr.write_text("dummy csr content", encoding="utf-8")
+
+    key_file = target_dir / "orphan.test.com.key"
+
+    # Should fail upfront before creating or touching .key file
+    ret = main(["csr", "generate", "--cn", "orphan.test.com", "--output-dir", str(out_dir)])
+    assert ret == 1
+    assert not key_file.exists(), "Private key should NOT be created when destination CSR already exists"
+
+
+def test_cli_keypair_rsa_no_orphaned_key_on_existing_pub(tmp_path, capsys):
+    priv_file = tmp_path / "id_rsa"
+    pub_file = tmp_path / "id_rsa.pub"
+    pub_file.write_text("existing pub key", encoding="utf-8")
+
+    ret = main(["keypair", "rsa", "--size", "2048", "--out", str(priv_file)])
+    assert ret == 1
+    assert not priv_file.exists(), "Private key should NOT be created when destination .pub already exists"
+
+
+def test_cli_keypair_ssh_no_orphaned_key_on_existing_pub(tmp_path, capsys):
+    priv_file = tmp_path / "id_ssh"
+    pub_file = tmp_path / "id_ssh.pub"
+    pub_file.write_text("existing ssh pub key", encoding="utf-8")
+
+    ret = main(["keypair", "ssh", "--type", "ed25519", "--out", str(priv_file)])
+    assert ret == 1
+    assert not priv_file.exists(), "Private key should NOT be created when destination .pub already exists"
+
+
+def test_cli_non_network_oserror_exits_code_1(capsys):
+    import errno
+    with patch("ittools.cli.commands.ssl.check_remote_ssl", side_effect=OSError(errno.ENOSPC, "No space left on device")):
+        ret = main(["ssl", "check", "example.com"])
+        # Non-network OSError must exit with 1 (validation/system error), NOT 2 (network error)
+        assert ret == 1
+        captured = capsys.readouterr()
+        assert "No space left on device" in captured.err
+

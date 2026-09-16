@@ -32,7 +32,8 @@ def is_network_error(exc: BaseException) -> bool:
         return False
 
     network_types = (
-        socket.error,
+        socket.gaierror,
+        socket.herror,
         ConnectionError,
         TimeoutError,
         ssl.SSLError,
@@ -43,7 +44,7 @@ def is_network_error(exc: BaseException) -> bool:
 
     if isinstance(exc, OSError):
         msg = str(exc).lower()
-        if any(term in msg for term in ("connection", "network", "timed out", "timeout", "refused", "unreachable")):
+        if any(term in msg for term in ("connection refused", "network unreachable", "host unreachable", "timed out", "timeout", "connection reset", "connection aborted")):
             return True
 
     if isinstance(exc, ValueError) and "No peer certificate received" in str(exc):

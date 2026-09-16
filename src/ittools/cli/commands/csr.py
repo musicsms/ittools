@@ -7,7 +7,7 @@ import os
 import sys
 
 from ittools.cli.prompt import prompt_subject
-from ittools.core.pki.csr import CSRSubject, decode_csr, generate_csr
+from ittools.core.pki.csr import CSRSubject, decode_csr, generate_csr, sanitize_name
 
 
 def write_private_key_file(path: str, content: str, force: bool = False) -> None:
@@ -63,14 +63,23 @@ def handle_csr_generate(args: argparse.Namespace) -> int:
         )
         key_size = args.key_size
 
+    sanitized_cn = sanitize_name(subject.common_name)
+    output_dir = args.output_dir or "./output"
+    target_dir = os.path.join(output_dir, sanitized_cn)
+    key_file = os.path.join(target_dir, f"{sanitized_cn}.key")
+    csr_file = os.path.join(target_dir, f"{sanitized_cn}.csr")
+
+    # Upfront check: ensure none of the destination files exist before key generation or writing
+    if not args.force:
+        existing = [f for f in (key_file, csr_file) if os.path.exists(f)]
+        if existing:
+            raise FileExistsError(
+                f"Target file already exists: {', '.join(existing)} (use --force to overwrite)"
+            )
+
     result = generate_csr(subject=subject, sans=sans, key_size=key_size)
 
-    output_dir = args.output_dir or "./output"
-    target_dir = os.path.join(output_dir, result.sanitized_cn)
     os.makedirs(target_dir, exist_ok=True)
-    key_file = os.path.join(target_dir, f"{result.sanitized_cn}.key")
-    csr_file = os.path.join(target_dir, f"{result.sanitized_cn}.csr")
-
     write_private_key_file(key_file, result.private_key_pem, force=args.force)
     write_file(csr_file, result.csr_pem, force=args.force)
 

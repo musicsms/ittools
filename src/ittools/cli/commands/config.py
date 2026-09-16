@@ -11,6 +11,9 @@ from ittools.core.config_gen.generator import generate_server_config
 
 def handle_config_generate(args: argparse.Namespace) -> int:
     """Handle 'config generate' command."""
+    if args.out and not args.force and os.path.exists(args.out):
+        raise FileExistsError(f"Target file already exists: {args.out} (use --force to overwrite)")
+
     config = generate_server_config(
         server=args.server,
         profile=args.profile,

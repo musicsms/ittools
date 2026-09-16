@@ -28,6 +28,16 @@ def handle_keypair_passphrase(args: argparse.Namespace) -> int:
 
 def handle_keypair_rsa(args: argparse.Namespace) -> int:
     """Handle 'keypair rsa' command."""
+    if args.out:
+        priv_path = args.out
+        pub_path = f"{args.out}.pub"
+        if not args.force:
+            existing = [f for f in (priv_path, pub_path) if os.path.exists(f)]
+            if existing:
+                raise FileExistsError(
+                    f"Target file already exists: {', '.join(existing)} (use --force to overwrite)"
+                )
+
     keypair = generate_rsa_keypair(key_size=args.size, password=args.password)
     if args.out:
         priv_path = args.out
@@ -43,6 +53,16 @@ def handle_keypair_rsa(args: argparse.Namespace) -> int:
 
 def handle_keypair_ssh(args: argparse.Namespace) -> int:
     """Handle 'keypair ssh' command."""
+    if args.out:
+        priv_path = args.out
+        pub_path = f"{args.out}.pub"
+        if not args.force:
+            existing = [f for f in (priv_path, pub_path) if os.path.exists(f)]
+            if existing:
+                raise FileExistsError(
+                    f"Target file already exists: {', '.join(existing)} (use --force to overwrite)"
+                )
+
     keypair = generate_ssh_keypair(
         key_type=args.type,
         key_size=args.size,
@@ -63,6 +83,16 @@ def handle_keypair_ssh(args: argparse.Namespace) -> int:
 
 def handle_keypair_pgp(args: argparse.Namespace) -> int:
     """Handle 'keypair pgp' command."""
+    if args.out_dir:
+        priv_path = os.path.join(args.out_dir, "private.asc")
+        pub_path = os.path.join(args.out_dir, "public.asc")
+        if not args.force:
+            existing = [f for f in (priv_path, pub_path) if os.path.exists(f)]
+            if existing:
+                raise FileExistsError(
+                    f"Target file already exists: {', '.join(existing)} (use --force to overwrite)"
+                )
+
     keypair = generate_pgp_key(
         name=args.name,
         email=args.email,
