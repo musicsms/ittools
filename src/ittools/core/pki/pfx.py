@@ -126,7 +126,7 @@ def extract_pfx_bundle(
     if p12.cert is not None:
         cert_pem = p12.cert.certificate.public_bytes(serialization.Encoding.PEM).decode("utf-8")
         if p12.cert.friendly_name is not None:
-            friendly_name = p12.cert.friendly_name.decode("utf-8")
+            friendly_name = p12.cert.friendly_name.decode("utf-8", errors="replace")
 
     ca_pems: list[str] = []
     if p12.additional_certs:
