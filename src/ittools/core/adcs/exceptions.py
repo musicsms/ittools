@@ -25,5 +25,6 @@ class ADCSPendingError(ADCSError):
     """The certificate request is pending CA administrator approval."""
 
     def __init__(self, req_id: str, message: str = "") -> None:
-        super().__init__(f"Certificate request pending approval. Request ID: {req_id}")
+        msg = message if message else f"Certificate request pending approval. Request ID: {req_id}"
+        super().__init__(msg)
         self.req_id = req_id

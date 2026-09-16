@@ -292,3 +292,17 @@ def test_adcs_get_ca_cert_error(mock_session_cls):
     with pytest.raises(ADCSAuthError):
         client.get_ca_cert()
 
+
+def test_adcs_server_normalization():
+    c1 = ADCSClient(server="https://ca.domain.com/")
+    assert c1.server == "ca.domain.com"
+    c2 = ADCSClient(server="http://ca.domain.com:8443//")
+    assert c2.server == "ca.domain.com:8443"
+
+
+def test_adcs_pending_error_custom_message():
+    err = ADCSPendingError(req_id="888", message="Custom pending status message")
+    assert str(err) == "Custom pending status message"
+    assert err.req_id == "888"
+
+

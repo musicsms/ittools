@@ -39,7 +39,13 @@ class ADCSClient:
         insecure: bool = False,
         timeout: float = 30.0,
     ) -> None:
-        self.server = server
+        # Normalize server: strip any http:// or https:// prefix and trailing slashes
+        clean_server = server.strip()
+        if clean_server.startswith("https://"):
+            clean_server = clean_server[len("https://"):]
+        elif clean_server.startswith("http://"):
+            clean_server = clean_server[len("http://"):]
+        self.server = clean_server.rstrip("/")
         self.username = username
         self.password = password
         self.auth_method = auth_method.lower()
