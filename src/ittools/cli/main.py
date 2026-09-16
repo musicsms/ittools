@@ -15,6 +15,7 @@ import requests
 from ittools.cli.commands.config import register_config_commands
 from ittools.cli.commands.csr import register_csr_commands
 from ittools.cli.commands.keypair import register_keypair_commands
+from ittools.cli.commands.pfx import register_pfx_commands
 from ittools.cli.commands.ssl import register_ssl_commands
 from ittools.core.keypair.pgp import GPGNotInstalledError
 
@@ -76,6 +77,7 @@ def build_parser() -> CLIParser:
     register_keypair_commands(subparsers)
     register_ssl_commands(subparsers)
     register_config_commands(subparsers)
+    register_pfx_commands(subparsers)
 
     return parser
 
