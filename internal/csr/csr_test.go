@@ -1,7 +1,9 @@
 package csr
 
 import (
+	"crypto/x509"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -96,4 +98,99 @@ func TestValidateKeySize(t *testing.T) {
 			t.Errorf("ValidateKeySize(%d) = nil, want error", bits)
 		}
 	}
+}
+
+func TestBuildCSR(t *testing.T) {
+	key, err := GenerateKey(2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	subject := Subject{
+		CommonName:         "*.example.com",
+		Organization:       "Acme Inc",
+		OrganizationalUnit: "IT",
+		City:               "Hanoi",
+		State:              "Hanoi",
+		Country:            "VN",
+		Email:              "admin@example.com",
+	}
+	sans := []string{"example.com", "www.example.com"}
+
+	der, err := BuildCSR(key, subject, sans)
+	if err != nil {
+		t.Fatalf("BuildCSR: %v", err)
+	}
+
+	parsed, err := x509.ParseCertificateRequest(der)
+	if err != nil {
+		t.Fatalf("ParseCertificateRequest: %v", err)
+	}
+
+	if parsed.Subject.CommonName != subject.CommonName {
+		t.Errorf("CommonName = %q, want %q", parsed.Subject.CommonName, subject.CommonName)
+	}
+	if !reflect.DeepEqual(parsed.Subject.Organization, []string{subject.Organization}) {
+		t.Errorf("Organization = %v, want %v", parsed.Subject.Organization, []string{subject.Organization})
+	}
+	if !reflect.DeepEqual(parsed.Subject.Country, []string{subject.Country}) {
+		t.Errorf("Country = %v, want %v", parsed.Subject.Country, []string{subject.Country})
+	}
+	if !reflect.DeepEqual(parsed.DNSNames, sans) {
+		t.Errorf("DNSNames = %v, want %v", parsed.DNSNames, sans)
+	}
+
+	if err := parsed.CheckSignature(); err != nil {
+		t.Errorf("CheckSignature: %v", err)
+	}
+
+	var keyUsageOID = []int{2, 5, 29, 15}
+	var extKeyUsageOID = []int{2, 5, 29, 37}
+	foundKeyUsage := false
+	foundExtKeyUsage := false
+	for _, ext := range parsed.Extensions {
+		if ext.Id.Equal(keyUsageOID) {
+			foundKeyUsage = true
+			if len(ext.Value) == 0 {
+				t.Error("key usage extension has empty value")
+			}
+		}
+		if ext.Id.Equal(extKeyUsageOID) {
+			foundExtKeyUsage = true
+			if len(ext.Value) == 0 {
+				t.Error("extended key usage extension has empty value")
+			}
+		}
+	}
+	if !foundKeyUsage {
+		t.Error("CSR missing Key Usage extension")
+	}
+	if !foundExtKeyUsage {
+		t.Error("CSR missing Extended Key Usage extension")
+	}
+}
+
+func TestEncodePEM(t *testing.T) {
+	key, err := GenerateKey(2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	der, err := BuildCSR(key, Subject{CommonName: "example.com"}, nil)
+	if err != nil {
+		t.Fatalf("BuildCSR: %v", err)
+	}
+
+	keyPEM := EncodeKeyPEM(key)
+	if !containsPEMHeader(keyPEM, "RSA PRIVATE KEY") {
+		t.Errorf("EncodeKeyPEM output missing RSA PRIVATE KEY header: %s", keyPEM)
+	}
+
+	csrPEM := EncodeCSRPEM(der)
+	if !containsPEMHeader(csrPEM, "CERTIFICATE REQUEST") {
+		t.Errorf("EncodeCSRPEM output missing CERTIFICATE REQUEST header: %s", csrPEM)
+	}
+}
+
+func containsPEMHeader(pemBytes []byte, header string) bool {
+	return strings.Contains(string(pemBytes), "-----BEGIN "+header+"-----")
 }
