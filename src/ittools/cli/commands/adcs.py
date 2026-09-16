@@ -330,7 +330,7 @@ def handle_adcs_retrieve(args: argparse.Namespace) -> int:
                 cert_pem=cert_pem,
                 ca_certs_pem=ca_content,
                 password=pfx_password,
-                friendly_name=getattr(args, "name", None),
+                friendly_name=args.name,
             )
             _write_pfx_file(out_pfx_path, pfx_bytes, force=args.force)
             sys.stdout.write(f"Assembled and saved PFX to: {out_pfx_path}\n")
