@@ -16,6 +16,7 @@ from ittools.cli.commands.config import register_config_commands
 from ittools.cli.commands.csr import register_csr_commands
 from ittools.cli.commands.keypair import register_keypair_commands
 from ittools.cli.commands.ssl import register_ssl_commands
+from ittools.core.keypair.pgp import GPGNotInstalledError
 
 
 class CLIParser(argparse.ArgumentParser):
@@ -108,6 +109,12 @@ def main(args: Sequence[str] | None = None) -> int:
         return parsed_args.handler(parsed_args)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 0
+    except GPGNotInstalledError as exc:
+        if debug:
+            traceback.print_exc(file=sys.stderr)
+        else:
+            sys.stderr.write(f"Error: {exc}\n")
+        return 1
     except BaseException as exc:
         if is_network_error(exc):
             exit_code = 2

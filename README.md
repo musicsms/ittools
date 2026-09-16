@@ -325,8 +325,7 @@ ittools ssl headers <url> [options]
 - `--json`: Output report as formatted JSON.
 
 **Exit Codes:**
-- `0`: Security score is Grade B, A, or A+.
-- `1`: Security score is Grade C or F.
+- `0`: Successful header analysis.
 - `2`: Network connection or request failure.
 
 **Examples:**
@@ -349,6 +348,7 @@ ittools ssl match --key <private-key.pem> --cert <cert-or-csr.pem>
 **Options:**
 - `--key KEY`: Path to PEM-encoded private key file.
 - `--cert CERT`: Path to PEM-encoded certificate or CSR file.
+- `--password PASSWORD`: Optional passphrase to decrypt private key if encrypted.
 
 **Exit Codes:**
 - `0`: Public key hashes match.

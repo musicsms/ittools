@@ -27,6 +27,7 @@ class SSLReport:
     tls_version: str = ""
     cipher_suite: str = ""
     warning: str | None = None
+    is_valid_chain: bool = True
 
 
 def _fetch_peer_cert_and_info(
@@ -48,13 +49,32 @@ def _fetch_peer_cert_and_info(
         ValueError: If no peer certificate was received.
         OSError: If connection or TLS handshake fails.
     """
-    context = ssl.create_default_context()
-    with socket.create_connection((host, port), timeout=timeout) as sock:
-        with context.wrap_socket(sock, server_hostname=host) as ssock:
-            der = ssock.getpeercert(binary_form=True)
-            tls_version = ssock.version() or ""
-            cipher = ssock.cipher()
-            cipher_suite = cipher[0] if cipher else ""
+    is_valid_chain = True
+    verification_error_msg: str | None = None
+
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with context.wrap_socket(sock, server_hostname=host) as ssock:
+                der = ssock.getpeercert(binary_form=True)
+                tls_version = ssock.version() or ""
+                cipher = ssock.cipher()
+                cipher_suite = cipher[0] if cipher else ""
+    except ssl.SSLCertVerificationError as e:
+        is_valid_chain = False
+        verification_error_msg = str(e)
+        if hasattr(ssl, "_create_unverified_context"):
+            insecure_ctx = ssl._create_unverified_context()
+        else:
+            insecure_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            insecure_ctx.check_hostname = False
+            insecure_ctx.verify_mode = ssl.CERT_NONE
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with insecure_ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                der = ssock.getpeercert(binary_form=True)
+                tls_version = ssock.version() or ""
+                cipher = ssock.cipher()
+                cipher_suite = cipher[0] if cipher else ""
 
     if not der:
         raise ValueError(f"No peer certificate received from {host}:{port}")
@@ -84,6 +104,12 @@ def _fetch_peer_cert_and_info(
     elif days_remaining < 30:
         warning = f"Certificate expires soon ({days_remaining} days remaining)"
 
+    if verification_error_msg:
+        if warning:
+            warning = f"{verification_error_msg}; {warning}"
+        else:
+            warning = verification_error_msg
+
     return {
         "subject": cert.subject.rfc4514_string(),
         "issuer": cert.issuer.rfc4514_string(),
@@ -95,6 +121,7 @@ def _fetch_peer_cert_and_info(
         "tls_version": tls_version,
         "cipher_suite": cipher_suite,
         "warning": warning,
+        "is_valid_chain": is_valid_chain,
     }
 
 
@@ -138,4 +165,5 @@ def check_remote_ssl(
         tls_version=info.get("tls_version", ""),
         cipher_suite=info.get("cipher_suite", ""),
         warning=warning,
+        is_valid_chain=info.get("is_valid_chain", True),
     )

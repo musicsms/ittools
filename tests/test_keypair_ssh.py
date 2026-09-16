@@ -47,3 +47,12 @@ def test_generate_ssh_encrypted():
 def test_generate_ssh_unsupported_type():
     with pytest.raises(ValueError, match="Unsupported key type"):
         generate_ssh_keypair(key_type="ecdsa")
+
+
+def test_generate_ssh_comment_sanitization():
+    pair = generate_ssh_keypair(key_type="ed25519", comment="  user@example.com\r\nwith newline  ")
+    assert "\n" not in pair.public_key
+    assert "\r" not in pair.public_key
+    assert pair.public_key.endswith("user@example.com  with newline")
+    assert len(pair.public_key.splitlines()) == 1
+

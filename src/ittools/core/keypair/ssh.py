@@ -71,7 +71,7 @@ def generate_ssh_keypair(
         format=serialization.PublicFormat.OpenSSH,
     ).decode("utf-8")
 
-    clean_comment = comment.strip()
+    clean_comment = comment.replace("\r", " ").replace("\n", " ").strip()
     public_key_str = (
         f"{raw_public_str} {clean_comment}" if clean_comment else raw_public_str
     )

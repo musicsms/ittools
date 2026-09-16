@@ -72,6 +72,7 @@ def test_generate_apache_modern_no_hsts():
     assert "SSLCertificateFile /etc/ssl/cert.pem" in cfg
     assert "SSLCertificateKeyFile /etc/ssl/key.pem" in cfg
     assert "SSLProtocol" in cfg
+    assert "SSLCipherSuite" not in cfg
     assert "Strict-Transport-Security" not in cfg
 
 
@@ -85,7 +86,8 @@ def test_generate_caddy_config():
     assert "example.com {" in cfg
     assert "tls /etc/cert.pem /etc/key.pem" in cfg
     assert "protocols tls1.2 tls1.3" in cfg
-    assert "Strict-Transport-Security" in cfg
+    assert 'header Strict-Transport-Security "max-age=63072000"' in cfg
+    assert 'max-age=63072000;"' not in cfg
 
 
 def test_generate_caddy_modern_no_hsts():

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import shutil
+import subprocess
 import tempfile
 
 import gnupg
@@ -58,60 +59,73 @@ def generate_pgp_key(
         raise ValueError("Name cannot be empty")
     if not email or not email.strip():
         raise ValueError("Email cannot be empty")
+    if expire_years < 0:
+        raise ValueError("expire_years must be non-negative")
 
     expire_str = "0" if expire_years == 0 else f"{expire_years}y"
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Configure gpg-agent and gpg for unattended loopback pinentry
-        agent_conf = os.path.join(temp_dir, "gpg-agent.conf")
-        with open(agent_conf, "w", encoding="utf-8") as f:
-            f.write("allow-loopback-pinentry\n")
+        try:
+            # Configure gpg-agent and gpg for unattended loopback pinentry
+            agent_conf = os.path.join(temp_dir, "gpg-agent.conf")
+            with open(agent_conf, "w", encoding="utf-8") as f:
+                f.write("allow-loopback-pinentry\n")
 
-        gpg_conf = os.path.join(temp_dir, "gpg.conf")
-        with open(gpg_conf, "w", encoding="utf-8") as f:
-            f.write("pinentry-mode loopback\n")
+            gpg_conf = os.path.join(temp_dir, "gpg.conf")
+            with open(gpg_conf, "w", encoding="utf-8") as f:
+                f.write("pinentry-mode loopback\n")
 
-        gpg = gnupg.GPG(gnupghome=temp_dir, options=["--pinentry-mode", "loopback"])
+            gpg = gnupg.GPG(gnupghome=temp_dir, options=["--pinentry-mode", "loopback"])
 
-        gen_kwargs: dict[str, object] = {
-            "name_real": name.strip(),
-            "name_email": email.strip(),
-            "name_comment": comment.strip() if comment else "",
-            "key_type": key_type,
-            "key_length": key_size,
-            "expire_date": expire_str,
-        }
+            gen_kwargs: dict[str, object] = {
+                "name_real": name.strip(),
+                "name_email": email.strip(),
+                "name_comment": comment.strip() if comment else "",
+                "key_type": key_type,
+                "key_length": key_size,
+                "expire_date": expire_str,
+            }
 
-        if passphrase:
-            gen_kwargs["passphrase"] = passphrase
-        else:
-            gen_kwargs["no_protection"] = True
+            if passphrase:
+                gen_kwargs["passphrase"] = passphrase
+            else:
+                gen_kwargs["no_protection"] = True
 
-        input_data = gpg.gen_key_input(**gen_kwargs)
-        result = gpg.gen_key(input_data)
+            input_data = gpg.gen_key_input(**gen_kwargs)
+            result = gpg.gen_key(input_data)
 
-        if not result.fingerprint:
-            raise RuntimeError(
-                f"Failed to generate PGP key: {result.status} {result.stderr}"
+            if not result.fingerprint:
+                raise RuntimeError(
+                    f"Failed to generate PGP key: {result.status} {result.stderr}"
+                )
+
+            fingerprint = str(result.fingerprint)
+            public_key = gpg.export_keys(fingerprint)
+            private_key = gpg.export_keys(
+                fingerprint, secret=True, passphrase=passphrase or ""
             )
 
-        fingerprint = str(result.fingerprint)
-        public_key = gpg.export_keys(fingerprint)
-        private_key = gpg.export_keys(
-            fingerprint, secret=True, passphrase=passphrase or ""
-        )
+            if not public_key:
+                raise RuntimeError(
+                    f"Failed to export PGP public key for fingerprint {fingerprint}"
+                )
+            if not private_key:
+                raise RuntimeError(
+                    f"Failed to export PGP private key for fingerprint {fingerprint}"
+                )
 
-        if not public_key:
-            raise RuntimeError(
-                f"Failed to export PGP public key for fingerprint {fingerprint}"
+            return PGPKeyPair(
+                private_key=private_key,
+                public_key=public_key,
+                fingerprint=fingerprint,
             )
-        if not private_key:
-            raise RuntimeError(
-                f"Failed to export PGP private key for fingerprint {fingerprint}"
-            )
-
-        return PGPKeyPair(
-            private_key=private_key,
-            public_key=public_key,
-            fingerprint=fingerprint,
-        )
+        finally:
+            try:
+                subprocess.run(
+                    ["gpgconf", "--homedir", temp_dir, "--kill", "gpg-agent"],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass

@@ -29,6 +29,7 @@ def handle_ssl_check(args: argparse.Namespace) -> int:
             f"Valid To:        {report.valid_to}",
             f"Days Remaining:  {report.days_remaining}",
             f"Expired:         {report.is_expired}",
+            f"Valid Chain:     {report.is_valid_chain}",
             f"TLS Version:     {report.tls_version}",
             f"Cipher Suite:    {report.cipher_suite}",
             f"SANs:            {sans_str}",
@@ -77,7 +78,11 @@ def handle_ssl_match(args: argparse.Namespace) -> int:
     with open(args.cert, "r", encoding="utf-8") as f:
         cert_pem = f.read()
 
-    result = match_key_and_cert(private_key_pem=key_pem, cert_or_csr_pem=cert_pem)
+    result = match_key_and_cert(
+        private_key_pem=key_pem,
+        cert_or_csr_pem=cert_pem,
+        password=args.password,
+    )
     lines = [
         f"Match:      {result.matched}",
         f"Key Hash:   {result.key_hash}",
@@ -131,4 +136,5 @@ def register_ssl_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     match_parser.add_argument("--key", required=True, help="Path to private key PEM file")
     match_parser.add_argument("--cert", required=True, help="Path to certificate or CSR PEM file")
+    match_parser.add_argument("--password", default=None, help="Password to decrypt private key if encrypted")
     match_parser.set_defaults(handler=handle_ssl_match)

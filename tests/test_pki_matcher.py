@@ -92,3 +92,39 @@ def test_match_invalid_inputs():
     res = generate_csr(CSRSubject(common_name="valid.com"))
     with pytest.raises(ValueError, match="Could not parse certificate or CSR PEM"):
         match_key_and_cert(res.private_key_pem, "invalid cert or csr")
+
+
+def test_match_key_and_cert_encrypted_key():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    password = "secretpassword"
+    key_pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.BestAvailableEncryption(password.encode()),
+    ).decode("utf-8")
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "cert.test")]))
+        .issuer_name(x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "cert.test")]))
+        .public_key(key.public_key())
+        .serial_number(1003)
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=30))
+        .sign(key, hashes.SHA256())
+    )
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode("utf-8")
+
+    # Without password or wrong password should raise ValueError
+    with pytest.raises(ValueError, match="Could not parse private key PEM"):
+        match_key_and_cert(key_pem, cert_pem)
+
+    with pytest.raises(ValueError, match="Could not parse private key PEM"):
+        match_key_and_cert(key_pem, cert_pem, password="wrongpassword")
+
+    # With correct password should match
+    match = match_key_and_cert(key_pem, cert_pem, password=password)
+    assert match.matched is True
+    assert match.key_hash == match.cert_hash
+

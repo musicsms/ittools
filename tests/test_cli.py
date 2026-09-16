@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from ittools.cli.main import main
-from ittools.core.keypair.pgp import PGPKeyPair
+from ittools.core.keypair.pgp import GPGNotInstalledError, PGPKeyPair
 from ittools.core.keypair.rsa import generate_rsa_keypair
 from ittools.core.pki.csr import CSRSubject, generate_csr
 from ittools.core.ssl_check.checker import SSLReport
@@ -217,6 +217,22 @@ def test_cli_keypair_pgp(tmp_path, capsys):
         assert "ABCD1234EF567890" in captured.out or "ABCD1234EF567890" in captured.err
 
 
+def test_cli_keypair_pgp_missing_gpg(capsys):
+    with patch(
+        "ittools.cli.commands.keypair.generate_pgp_key",
+        side_effect=GPGNotInstalledError("System gpg binary is not installed."),
+    ):
+        ret = main([
+            "keypair", "pgp",
+            "--name", "Alice",
+            "--email", "alice@example.com",
+        ])
+        assert ret == 1
+        captured = capsys.readouterr()
+        assert "Error: System gpg binary is not installed." in captured.err
+        assert "Traceback" not in captured.err
+
+
 def test_cli_ssl_check_valid(capsys):
     fake_report = SSLReport(
         host="example.com",
@@ -331,6 +347,18 @@ def test_cli_ssl_match(tmp_path, capsys):
     assert ret_mismatch == 3
     captured_mismatch = capsys.readouterr()
     assert "not match" in captured_mismatch.out.lower() or "mismatch" in captured_mismatch.out.lower()
+
+    # Encrypted private key with --password test
+    enc_key = generate_rsa_keypair(key_size=2048, password="clipassword")
+    enc_key_file = tmp_path / "enc.key"
+    enc_pub_file = tmp_path / "enc.pub"
+    enc_key_file.write_text(enc_key.private_key_pem, encoding="utf-8")
+    enc_pub_file.write_text(enc_key.public_key_pem, encoding="utf-8")
+
+    ret_enc = main(["ssl", "match", "--key", str(enc_key_file), "--cert", str(enc_pub_file), "--password", "clipassword"])
+    assert ret_enc == 0
+    captured_enc = capsys.readouterr()
+    assert "matches" in captured_enc.out.lower()
 
 
 def test_cli_config_generate(capsys):

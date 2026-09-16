@@ -74,7 +74,6 @@ def _generate_apache(
         profile_block = (
             "    # Modern configuration\n"
             "    SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1 -TLSv1.2\n"
-            f"    SSLCipherSuite {OPENSSL_INTERMEDIATE_CIPHERS}\n"
             "    SSLHonorCipherOrder off\n"
             "    SSLSessionTickets off"
         )
@@ -133,7 +132,7 @@ def _generate_caddy(
         lines.extend([
             "",
             "    # HSTS (63072000 seconds)",
-            '    header Strict-Transport-Security "max-age=63072000;"',
+            '    header Strict-Transport-Security "max-age=63072000"',
         ])
     lines.append("}")
     return "\n".join(lines) + "\n"

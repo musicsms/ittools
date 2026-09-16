@@ -159,7 +159,66 @@ def test_fetch_peer_cert_no_cert_raises():
         patch("ssl.create_default_context", return_value=mock_context),
     ):
         mock_create_conn.return_value.__enter__.return_value = mock_sock
-        mock_create_conn.return_value.__exit__.return_value = False
-
         with pytest.raises(ValueError, match="No peer certificate"):
             _fetch_peer_cert_and_info("empty.local", 443, 5.0)
+
+
+def test_fetch_peer_cert_verification_error_fallback():
+    """Test fallback to unverified context when SSLCertVerificationError occurs."""
+    import ssl
+    from cryptography.hazmat.primitives import serialization
+
+    # Generate synthetic certificate
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "untrusted.local"),
+    ])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=10))
+        .not_valid_after(now - datetime.timedelta(days=1))  # Expired
+        .sign(private_key, hashes.SHA256())
+    )
+    der_bytes = cert.public_bytes(serialization.Encoding.DER)
+
+    mock_sock = MagicMock()
+
+    # Verified context raises SSLCertVerificationError
+    mock_default_ctx = MagicMock()
+    mock_default_ctx.wrap_socket.side_effect = ssl.SSLCertVerificationError(
+        1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: certificate has expired"
+    )
+
+    # Insecure context succeeds
+    mock_insecure_ssock = MagicMock()
+    mock_insecure_ssock.getpeercert.return_value = der_bytes
+    mock_insecure_ssock.version.return_value = "TLSv1.3"
+    mock_insecure_ssock.cipher.return_value = ("TLS_AES_256_GCM_SHA384", "TLSv1.3", 256)
+    mock_insecure_ssock.__enter__.return_value = mock_insecure_ssock
+    mock_insecure_ssock.__exit__.return_value = False
+
+    mock_insecure_ctx = MagicMock()
+    mock_insecure_ctx.wrap_socket.return_value = mock_insecure_ssock
+
+    with (
+        patch("socket.create_connection") as mock_create_conn,
+        patch("ssl.create_default_context", return_value=mock_default_ctx),
+        patch("ssl._create_unverified_context", return_value=mock_insecure_ctx),
+    ):
+        mock_create_conn.return_value.__enter__.return_value = mock_sock
+        mock_create_conn.return_value.__exit__.return_value = False
+
+        report = check_remote_ssl("untrusted.local", 443, 5.0)
+
+        assert report.is_valid_chain is False
+        assert report.is_expired is True
+        assert report.days_remaining < 0
+        assert "untrusted.local" in report.subject
+        assert "certificate verify failed" in report.warning
+        assert "Certificate has expired" in report.warning
+
