@@ -8,12 +8,12 @@ import (
 
 func TestPromptSubjectHappyPath(t *testing.T) {
 	input := strings.Join([]string{
-		"example.com", // Common Name
-		"Acme Inc",    // Organization
-		"IT",          // Organizational Unit
-		"Hanoi",       // City
-		"Hanoi",       // State
-		"VN",          // Country
+		"example.com",       // Common Name
+		"Acme Inc",          // Organization
+		"IT",                // Organizational Unit
+		"Hanoi",             // City
+		"Hanoi",             // State
+		"VN",                // Country
 		"admin@example.com", // Email
 		"a.com, b.com",      // SANs
 		"3072",              // Key size

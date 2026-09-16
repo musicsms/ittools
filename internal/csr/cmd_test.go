@@ -1,8 +1,11 @@
 package csr
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -58,6 +61,48 @@ func TestRunGenerateWithFlags(t *testing.T) {
 	}
 }
 
+func TestRunGenerateNormalizesFlagFields(t *testing.T) {
+	chdirTemp(t)
+
+	var stdout strings.Builder
+	err := runGenerate([]string{
+		"--cn", "  example.com  ",
+		"--country", "vn",
+	}, strings.NewReader(""), &stdout)
+	if err != nil {
+		t.Fatalf("runGenerate: %v", err)
+	}
+
+	csrPath := filepath.Join("output", "example.com", "example.com.csr")
+	csrPEM, err := os.ReadFile(csrPath)
+	if err != nil {
+		t.Fatalf("read csr file: %v", err)
+	}
+	block, _ := pem.Decode(csrPEM)
+	if block == nil {
+		t.Fatal("failed to decode csr PEM")
+	}
+	parsed, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		t.Fatalf("ParseCertificateRequest: %v", err)
+	}
+	if parsed.Subject.CommonName != "example.com" {
+		t.Errorf("CommonName = %q, want %q (untrimmed input should be trimmed)", parsed.Subject.CommonName, "example.com")
+	}
+	if !reflect.DeepEqual(parsed.Subject.Country, []string{"VN"}) {
+		t.Errorf("Country = %v, want %v (lowercase input should be upper-cased)", parsed.Subject.Country, []string{"VN"})
+	}
+}
+
+func TestRunGenerateHelpFlag(t *testing.T) {
+	chdirTemp(t)
+
+	err := runGenerate([]string{"--help"}, strings.NewReader(""), &strings.Builder{})
+	if err != nil {
+		t.Errorf("runGenerate([--help]) = %v, want nil", err)
+	}
+}
+
 func TestRunGenerateMissingCommonNameFails(t *testing.T) {
 	chdirTemp(t)
 
@@ -91,6 +136,29 @@ func TestRunGenerateInteractiveWhenNoArgs(t *testing.T) {
 
 	if err := runGenerate(nil, strings.NewReader(input), &strings.Builder{}); err != nil {
 		t.Fatalf("runGenerate interactive: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join("output", "example.com", "example.com.key")); err != nil {
+		t.Errorf("expected key file: %v", err)
+	}
+}
+
+func TestRunGenerateInteractiveWithForce(t *testing.T) {
+	chdirTemp(t)
+
+	if err := runGenerate([]string{"--cn", "example.com"}, strings.NewReader(""), &strings.Builder{}); err != nil {
+		t.Fatalf("first runGenerate: %v", err)
+	}
+
+	input := strings.Join([]string{
+		"example.com", "", "", "", "", "", "", "", "",
+	}, "\n") + "\n"
+
+	// "--force" alone must not fall into the flag path (which would fail on
+	// a missing --cn); it should still prompt interactively, and the prompt
+	// path should be allowed to overwrite the existing output.
+	if err := runGenerate([]string{"--force"}, strings.NewReader(input), &strings.Builder{}); err != nil {
+		t.Fatalf("runGenerate with --force (interactive): %v", err)
 	}
 
 	if _, err := os.Stat(filepath.Join("output", "example.com", "example.com.key")); err != nil {

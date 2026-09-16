@@ -1,6 +1,7 @@
 package csr
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,7 +24,7 @@ func (Tool) Name() string { return "csr" }
 // error.
 func (Tool) Run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: ittools csr generate [flags]")
+		return errors.New("usage: ittools csr generate [flags]")
 	}
 	switch args[0] {
 	case "generate":
@@ -51,21 +52,33 @@ func runGenerate(args []string, stdin io.Reader, stdout io.Writer) error {
 	force := fs.Bool("force", false, "Overwrite existing output files")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
+
+	// Interactive mode is used when no flags were given, or when the only
+	// flag given was --force. This lets "ittools csr generate --force" still
+	// prompt interactively while also being allowed to overwrite existing
+	// output; without this, --force alone would fall into the flag path and
+	// fail on a missing --cn, with no way to combine interactive input and
+	// overwrite.
+	interactive := fs.NFlag() == 0 || (fs.NFlag() == 1 && *force)
 
 	var subject Subject
 	var sans []string
 	var bits int
 
-	if len(args) == 0 {
+	if interactive {
 		var err error
 		subject, sans, bits, err = PromptSubject(stdin, stdout)
 		if err != nil {
 			return fmt.Errorf("read input: %w", err)
 		}
+		subject = NormalizeSubject(subject)
 	} else {
-		subject = Subject{
+		subject = NormalizeSubject(Subject{
 			CommonName:         *cn,
 			Organization:       *org,
 			OrganizationalUnit: *ou,
@@ -73,7 +86,7 @@ func runGenerate(args []string, stdin io.Reader, stdout io.Writer) error {
 			State:              *state,
 			Country:            *country,
 			Email:              *email,
-		}
+		})
 		sans = SplitSANs(*san)
 		bits = *keySize
 
@@ -88,6 +101,16 @@ func runGenerate(args []string, stdin io.Reader, stdout io.Writer) error {
 		}
 	}
 
+	name := SanitizeName(subject.CommonName)
+	dir := filepath.Join("output", name)
+
+	// Check for a would-be overwrite before doing any expensive work, so a
+	// --force-less rerun against existing output fails fast instead of
+	// burning an RSA keygen first.
+	if err := CheckOverwrite(dir, name, *force); err != nil {
+		return err
+	}
+
 	key, err := GenerateKey(bits)
 	if err != nil {
 		return err
@@ -100,9 +123,6 @@ func runGenerate(args []string, stdin io.Reader, stdout io.Writer) error {
 
 	keyPEM := EncodeKeyPEM(key)
 	csrPEM := EncodeCSRPEM(der)
-
-	name := SanitizeName(subject.CommonName)
-	dir := filepath.Join("output", name)
 
 	keyPath, csrPath, err := WriteOutput(dir, name, keyPEM, csrPEM, *force)
 	if err != nil {

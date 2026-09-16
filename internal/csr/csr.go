@@ -18,8 +18,37 @@ import (
 // SanitizeName converts a Common Name into a filesystem-safe name, replacing
 // "*" with "wildcard" (e.g. "*.example.com" -> "wildcard.example.com"). It is
 // used for both the output directory and file basenames.
+//
+// To prevent a crafted Common Name (e.g. "../../pwned.example.com") from
+// escaping the output directory or writing to an arbitrary path, path
+// separators ("/" and "\") are replaced with "_". If the result would be
+// exactly "." or ".." (or empty), it is replaced with "_" instead, since
+// those names are meaningful to the filesystem rather than being an
+// arbitrary safe basename.
 func SanitizeName(cn string) string {
-	return strings.ReplaceAll(cn, "*", "wildcard")
+	name := strings.ReplaceAll(cn, "*", "wildcard")
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, "\\", "_")
+	if name == "." || name == ".." || name == "" {
+		name = "_"
+	}
+	return name
+}
+
+// NormalizeSubject returns a copy of s with every string field trimmed of
+// leading and trailing whitespace (via strings.TrimSpace), and Country
+// additionally upper-cased. ValidateCountry accepts letters in either case,
+// but the X.509 country attribute convention (ISO 3166-1 alpha-2) is upper
+// case, so this is where that normalization happens for all entry points.
+func NormalizeSubject(s Subject) Subject {
+	s.CommonName = strings.TrimSpace(s.CommonName)
+	s.Organization = strings.TrimSpace(s.Organization)
+	s.OrganizationalUnit = strings.TrimSpace(s.OrganizationalUnit)
+	s.City = strings.TrimSpace(s.City)
+	s.State = strings.TrimSpace(s.State)
+	s.Country = strings.ToUpper(strings.TrimSpace(s.Country))
+	s.Email = strings.TrimSpace(s.Email)
+	return s
 }
 
 // SplitSANs parses a comma-separated Subject Alternative Names string into a

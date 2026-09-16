@@ -16,6 +16,12 @@ func TestSanitizeName(t *testing.T) {
 		{"plain domain", "example.com", "example.com"},
 		{"wildcard", "*.example.com", "wildcard.example.com"},
 		{"nested wildcard", "*.sub.example.com", "wildcard.sub.example.com"},
+		{"path traversal", "../../pwned.example.com", ".._.._pwned.example.com"},
+		{"forward slashes", "a/b/c", "a_b_c"},
+		{"backslashes", `a\b\c`, "a_b_c"},
+		{"dot", ".", "_"},
+		{"dot dot", "..", "_"},
+		{"empty", "", "_"},
 	}
 
 	for _, tc := range cases {
@@ -23,6 +29,68 @@ func TestSanitizeName(t *testing.T) {
 			got := SanitizeName(tc.cn)
 			if got != tc.want {
 				t.Errorf("SanitizeName(%q) = %q, want %q", tc.cn, got, tc.want)
+			}
+			if strings.ContainsAny(got, `/\`) {
+				t.Errorf("SanitizeName(%q) = %q, contains a path separator", tc.cn, got)
+			}
+		})
+	}
+}
+
+func TestNormalizeSubject(t *testing.T) {
+	cases := []struct {
+		name string
+		in   Subject
+		want Subject
+	}{
+		{
+			name: "already-clean input is a no-op",
+			in: Subject{
+				CommonName:         "example.com",
+				Organization:       "Acme Inc",
+				OrganizationalUnit: "IT",
+				City:               "Hanoi",
+				State:              "Hanoi",
+				Country:            "VN",
+				Email:              "admin@example.com",
+			},
+			want: Subject{
+				CommonName:         "example.com",
+				Organization:       "Acme Inc",
+				OrganizationalUnit: "IT",
+				City:               "Hanoi",
+				State:              "Hanoi",
+				Country:            "VN",
+				Email:              "admin@example.com",
+			},
+		},
+		{
+			name: "trims whitespace on multiple fields",
+			in: Subject{
+				CommonName:   "  example.com  ",
+				Organization: "\tAcme Inc\n",
+				City:         " Hanoi ",
+				Country:      " VN ",
+			},
+			want: Subject{
+				CommonName:   "example.com",
+				Organization: "Acme Inc",
+				City:         "Hanoi",
+				Country:      "VN",
+			},
+		},
+		{
+			name: "lowercase country is upper-cased",
+			in:   Subject{Country: "vn"},
+			want: Subject{Country: "VN"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NormalizeSubject(tc.in)
+			if got != tc.want {
+				t.Errorf("NormalizeSubject(%+v) = %+v, want %+v", tc.in, got, tc.want)
 			}
 		})
 	}
