@@ -165,7 +165,8 @@ def handle_pfx_extract(args: argparse.Namespace) -> int:
 
     if result.ca_certs_pem:
         ca_dest.parent.mkdir(parents=True, exist_ok=True)
-        ca_dest.write_text("\n".join(result.ca_certs_pem), encoding="utf-8")
+        ca_bundle = "".join(c if c.endswith("\n") else c + "\n" for c in result.ca_certs_pem)
+        ca_dest.write_text(ca_bundle, encoding="utf-8")
         sys.stdout.write(f"CA chain extracted to: {ca_dest}\n")
 
     return 0
