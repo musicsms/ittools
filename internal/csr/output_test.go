@@ -1,0 +1,166 @@
+package csr
+
+import (
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestWriteOutput(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "example.com")
+
+	keyPath, csrPath, err := WriteOutput(target, "example.com", []byte("KEYDATA"), []byte("CSRDATA"), false)
+	if err != nil {
+		t.Fatalf("WriteOutput: %v", err)
+	}
+
+	if keyPath != filepath.Join(target, "example.com.key") {
+		t.Errorf("keyPath = %q, want %q", keyPath, filepath.Join(target, "example.com.key"))
+	}
+	if csrPath != filepath.Join(target, "example.com.csr") {
+		t.Errorf("csrPath = %q, want %q", csrPath, filepath.Join(target, "example.com.csr"))
+	}
+
+	gotKey, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("read key file: %v", err)
+	}
+	if string(gotKey) != "KEYDATA" {
+		t.Errorf("key file content = %q, want %q", gotKey, "KEYDATA")
+	}
+
+	gotCSR, err := os.ReadFile(csrPath)
+	if err != nil {
+		t.Fatalf("read csr file: %v", err)
+	}
+	if string(gotCSR) != "CSRDATA" {
+		t.Errorf("csr file content = %q, want %q", gotCSR, "CSRDATA")
+	}
+
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("stat key file: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("key file mode = %v, want 0600", perm)
+	}
+}
+
+func TestWriteOutputRefusesOverwriteWithoutForce(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "example.com")
+
+	if _, _, err := WriteOutput(target, "example.com", []byte("KEYDATA"), []byte("CSRDATA"), false); err != nil {
+		t.Fatalf("first WriteOutput: %v", err)
+	}
+
+	_, _, err := WriteOutput(target, "example.com", []byte("NEWKEY"), []byte("NEWCSR"), false)
+	if err == nil {
+		t.Fatal("second WriteOutput without force = nil error, want error")
+	}
+
+	gotKey, readErr := os.ReadFile(filepath.Join(target, "example.com.key"))
+	if readErr != nil {
+		t.Fatalf("read key file: %v", readErr)
+	}
+	if string(gotKey) != "KEYDATA" {
+		t.Errorf("key file was overwritten: got %q, want original %q", gotKey, "KEYDATA")
+	}
+}
+
+func TestWriteOutputForceOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "example.com")
+
+	if _, _, err := WriteOutput(target, "example.com", []byte("KEYDATA"), []byte("CSRDATA"), false); err != nil {
+		t.Fatalf("first WriteOutput: %v", err)
+	}
+
+	if _, _, err := WriteOutput(target, "example.com", []byte("NEWKEY"), []byte("NEWCSR"), true); err != nil {
+		t.Fatalf("second WriteOutput with force: %v", err)
+	}
+
+	gotKey, err := os.ReadFile(filepath.Join(target, "example.com.key"))
+	if err != nil {
+		t.Fatalf("read key file: %v", err)
+	}
+	if string(gotKey) != "NEWKEY" {
+		t.Errorf("key file content = %q, want %q", gotKey, "NEWKEY")
+	}
+}
+
+func TestWriteOutputRejectsPathEscape(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sandbox")
+
+	_, _, err := WriteOutput(target, "../../escaped", []byte("KEY"), []byte("CSR"), false)
+	if err == nil {
+		t.Fatal("WriteOutput with escaping name = nil error, want error")
+	}
+	if !strings.Contains(err.Error(), "escapes output directory") {
+		t.Errorf("error = %v, want mention of escaping output directory", err)
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Errorf("target directory should not have been created, stat err = %v", statErr)
+	}
+}
+
+func TestWriteOutputRoundTripsRealPEM(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "example.com")
+
+	key, err := GenerateKey(2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	der, err := BuildCSR(key, Subject{CommonName: "example.com"}, nil)
+	if err != nil {
+		t.Fatalf("BuildCSR: %v", err)
+	}
+	keyPEM := EncodeKeyPEM(key)
+	csrPEM := EncodeCSRPEM(der)
+
+	keyPath, csrPath, err := WriteOutput(target, "example.com", keyPEM, csrPEM, false)
+	if err != nil {
+		t.Fatalf("WriteOutput: %v", err)
+	}
+
+	gotKeyPEM, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("read key file: %v", err)
+	}
+	keyBlock, _ := pem.Decode(gotKeyPEM)
+	if keyBlock == nil {
+		t.Fatal("failed to decode key PEM")
+	}
+	parsedKey, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		t.Fatalf("ParsePKCS1PrivateKey: %v", err)
+	}
+
+	gotCSRPEM, err := os.ReadFile(csrPath)
+	if err != nil {
+		t.Fatalf("read csr file: %v", err)
+	}
+	csrBlock, _ := pem.Decode(gotCSRPEM)
+	if csrBlock == nil {
+		t.Fatal("failed to decode csr PEM")
+	}
+	parsedCSR, err := x509.ParseCertificateRequest(csrBlock.Bytes)
+	if err != nil {
+		t.Fatalf("ParseCertificateRequest: %v", err)
+	}
+
+	csrPubKey, ok := parsedCSR.PublicKey.(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("CSR public key type = %T, want *rsa.PublicKey", parsedCSR.PublicKey)
+	}
+	if !parsedKey.PublicKey.Equal(csrPubKey) {
+		t.Error("CSR public key does not match the written private key's public key")
+	}
+}
