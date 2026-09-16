@@ -411,3 +411,23 @@ def test_cli_non_network_oserror_exits_code_1(capsys):
         captured = capsys.readouterr()
         assert "No space left on device" in captured.err
 
+
+def test_cli_config_generate_out_file_and_force(tmp_path, capsys):
+    out_file = tmp_path / "nginx.conf"
+    ret1 = main(["config", "generate", "--server", "nginx", "--domain", "out.example.com", "--out", str(out_file)])
+    assert ret1 == 0
+    assert out_file.exists()
+    assert "server_name out.example.com;" in out_file.read_text(encoding="utf-8")
+
+    # Without --force, should fail since out_file already exists
+    ret2 = main(["config", "generate", "--server", "nginx", "--domain", "out.example.com", "--out", str(out_file)])
+    assert ret2 == 1
+    captured2 = capsys.readouterr()
+    assert "already exists" in captured2.err.lower()
+
+    # With --force, should succeed
+    ret3 = main(["config", "generate", "--server", "nginx", "--domain", "new.example.com", "--out", str(out_file), "--force"])
+    assert ret3 == 0
+    assert "server_name new.example.com;" in out_file.read_text(encoding="utf-8")
+
+
