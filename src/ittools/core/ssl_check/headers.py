@@ -119,3 +119,4 @@ def check_security_headers(
         security_score=score,
         recommendations=recommendations,
     )
+

@@ -2,11 +2,13 @@
 
 from ittools.core.adcs.client import ADCSClient, ADCSResult
 from ittools.core.adcs.exceptions import (
-    ADCSError,
     ADCSAuthError,
+    ADCSAuthenticationError,
     ADCSConnectionError,
+    ADCSError,
     ADCSPendingError,
     ADCSRequestDeniedError,
+    ADCSRequestError,
 )
 
 __all__ = [
@@ -14,7 +16,10 @@ __all__ = [
     "ADCSResult",
     "ADCSError",
     "ADCSAuthError",
+    "ADCSAuthenticationError",
     "ADCSConnectionError",
     "ADCSPendingError",
     "ADCSRequestDeniedError",
+    "ADCSRequestError",
 ]
+

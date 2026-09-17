@@ -23,6 +23,13 @@ dev = [
 ntlm = [
     "requests-ntlm>=1.2.0",
 ]
+mcp = [
+    "mcp>=1.2.0",
+]
+all = [
+    "requests-ntlm>=1.2.0",
+    "mcp>=1.2.0",
+]
 
 [project.scripts]
 ittools = "ittools.cli.main:main"

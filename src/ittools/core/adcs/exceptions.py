@@ -28,3 +28,19 @@ class ADCSPendingError(ADCSError):
         msg = message if message else f"Certificate request pending approval. Request ID: {req_id}"
         super().__init__(msg)
         self.req_id = req_id
+
+
+# Aliases for consistent naming across subsystems
+ADCSAuthenticationError = ADCSAuthError
+ADCSRequestError = ADCSRequestDeniedError
+
+__all__ = [
+    "ADCSError",
+    "ADCSConnectionError",
+    "ADCSAuthError",
+    "ADCSAuthenticationError",
+    "ADCSRequestDeniedError",
+    "ADCSRequestError",
+    "ADCSPendingError",
+]
+
