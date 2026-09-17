@@ -40,6 +40,16 @@ A command-line toolkit of IT, PKI, and SSL/TLS utilities organized as subcommand
     - [`ssl match`](#ssl-match)
   - [Hardened Server TLS Config (`ittools config`)](#hardened-server-tls-config-ittools-config)
     - [`config generate`](#config-generate)
+- [Model Context Protocol (MCP) Server (`ittools mcp`)](#model-context-protocol-mcp-server-ittools-mcp)
+  - [Overview & Assistant Integration](#overview--assistant-integration)
+  - [Running the MCP Server](#running-the-mcp-server)
+  - [Client Configuration](#client-configuration)
+    - [Claude Desktop](#claude-desktop)
+    - [Cursor](#cursor)
+    - [Google Antigravity](#google-antigravity)
+    - [VS Code / Windsurf / Generic Clients](#vs-code--windsurf--generic-clients)
+  - [MCP Tools Reference](#mcp-tools-reference)
+  - [Security & In-Memory Guarantees](#security--in-memory-guarantees)
 - [Development & Testing](#development--testing)
   - [Running Tests](#running-tests)
   - [Project Structure](#project-structure)
@@ -66,6 +76,7 @@ A command-line toolkit of IT, PKI, and SSL/TLS utilities organized as subcommand
 | `ittools ssl` | `headers` | Audit and score HTTP security response headers | `url`, `--timeout`, `--json` |
 | `ittools ssl` | `match` | Verify private key matches public cert or CSR | `--key`, `--cert`, `--password` |
 | `ittools config` | `generate` | Generate Mozilla TLS config for Nginx, Apache, Caddy | `--server`, `--profile`, `--domain`, `--cert`, `--key`, `--no-hsts` |
+| `ittools mcp` | - | Run native Model Context Protocol (MCP) server for AI assistants | `--transport {stdio,sse}`, `--port` |
 
 ---
 
@@ -149,6 +160,18 @@ To enable NTLM authentication for Active Directory ADCS enrollment:
 pip install -e ".[ntlm]"
 # or directly:
 pip install requests-ntlm
+```
+
+To install with Model Context Protocol (MCP) server support:
+
+```bash
+pip install -e ".[mcp]"
+```
+
+To install all optional dependencies (NTLM authentication and MCP server):
+
+```bash
+pip install -e ".[all]"
 ```
 
 *Note on Debian/Ubuntu/Kali (PEP 668 externally-managed environments):* If installing into system/user Python outside a virtual environment, pass `--break-system-packages`:
@@ -708,6 +731,176 @@ ittools config generate --server caddy --domain example.org
 
 ---
 
+## Model Context Protocol (MCP) Server (`ittools mcp`)
+
+`ittools` provides a native [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server subsystem that exposes all 15 IT, PKI, ADCS, Keypair, and SSL inspection capabilities directly as structured tools to AI models and coding assistants.
+
+Assistants such as **Claude Desktop**, **Cursor**, **Google Antigravity**, **VS Code** (via Cline, Roo Code, or Continue), and **Windsurf** can invoke these tools to generate keys, create and extract PFX bundles, request certificates from Active Directory, audit SSL/TLS endpoints, and produce hardened configurations safely and reliably without shell parsing or custom glue scripts.
+
+### Overview & Assistant Integration
+
+Every MCP tool in `ittools` is implemented with:
+- **In-Memory Payloads by Default**: Operations return pure PEM text, base64 blobs, and structured data dictionaries directly to the model context without forcing disk I/O.
+- **Optional Safe Persistence**: Files are only written to disk when output paths or directories are explicitly passed by the assistant or user.
+- **Strict 0600 Permissions**: Private keys and PFX archives are written with restrictive owner-only permissions (`0600`).
+- **Non-Blocking Asynchronous ADCS**: ADCS requests requiring CA administrator approval return structured `pending` states with Request IDs for later retrieval, without raising exceptions or hanging agent turns.
+
+### Installation
+
+Install `ittools` with MCP server support:
+
+```bash
+pip install "ittools[mcp]"
+```
+
+Or install all optional dependencies (NTLM authentication for ADCS + MCP server):
+
+```bash
+pip install "ittools[all]"
+```
+
+### Running the MCP Server
+
+`ittools` provides a built-in CLI command to start the MCP server:
+
+```bash
+# Standard input/output transport (default, recommended for local desktop clients)
+ittools mcp
+
+# Equivalent using module syntax
+python3 -m ittools.cli.main mcp
+
+# Server-Sent Events (SSE) HTTP transport (for containerized or network deployments)
+ittools mcp --transport sse --port 8000
+```
+
+**Options:**
+- `--transport {stdio,sse}`: Transport protocol (`stdio` default, or `sse`).
+- `--port PORT`: Port for SSE HTTP transport (default: `8000`).
+
+### Client Configuration
+
+#### Claude Desktop
+
+Add `ittools` to your `claude_desktop_config.json`:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "ittools": {
+      "command": "ittools",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+*If using a dedicated Python virtual environment:*
+
+```json
+{
+  "mcpServers": {
+    "ittools": {
+      "command": "/path/to/venv/bin/python3",
+      "args": ["-m", "ittools.cli.main", "mcp"]
+    }
+  }
+}
+```
+
+#### Cursor
+
+Add `ittools` to your Cursor MCP configuration file (`.cursor/mcp.json`) or in **Cursor Settings > Features > MCP**:
+
+```json
+{
+  "mcpServers": {
+    "ittools": {
+      "command": "ittools",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+#### Google Antigravity
+
+Configure `ittools` in your Antigravity project or user MCP configuration (`~/.gemini/antigravity/mcp_servers.json` or `.gemini/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "ittools": {
+      "command": "ittools",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+#### VS Code / Windsurf / Generic Clients
+
+For VS Code extensions supporting MCP (such as **Cline**, **Roo Code**, or **Continue**) or **Windsurf**, add to the respective MCP settings file:
+
+**Standard I/O (stdio):**
+```json
+{
+  "mcpServers": {
+    "ittools": {
+      "command": "ittools",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Remote / SSE Transport:**
+If running `ittools mcp --transport sse --port 8000`, configure clients pointing to the SSE endpoint:
+```json
+{
+  "mcpServers": {
+    "ittools": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
+
+### MCP Tools Reference
+
+The `ittools` MCP server registers **15 native tools** covering PKI, cryptographic keypairs, SSL/TLS auditing, server hardening, and Active Directory enrollment:
+
+| Tool Name | Category | Description | Key Parameters | Return Type |
+|---|---|---|---|---|
+| `csr_generate` | PKI | Generate RSA private key and PKCS#10 CSR | `common_name` *(req)*, `organization`, `organizational_unit`, `city`, `state`, `country`, `email`, `sans`, `key_size` (default: 2048), `output_dir`, `force` | `dict` (`common_name`, `private_key_pem`, `csr_pem`, `saved_files`) |
+| `csr_decode` | PKI | Parse and inspect PEM Certificate Signing Request | `csr_pem` *(req)* | `dict` (`common_name`, `organization`, `country`, `sans`, `key_type`, `key_size`, `signature_algorithm`) |
+| `pfx_create` | PKI | Bundle private key, certificate, and CA chain into PKCS#12 archive | `private_key_pem` *(req)*, `cert_pem` *(req)*, `ca_certs_pem`, `password`, `friendly_name`, `key_password`, `output_path`, `force` | `dict` (`pfx_base64`, `size_bytes`, `friendly_name`, `saved_to`) |
+| `pfx_extract` | PKI | Extract private key (mode 0600), cert, and CA bundle from PFX archive | `pfx_data_or_path` *(req, base64 or file path)*, `password`, `output_dir`, `force` | `dict` (`private_key_pem`, `cert_pem`, `ca_certs_pem`, `friendly_name`, `saved_files`) |
+| `ssl_match` | PKI / SSL | Verify whether a private key matches a certificate or CSR via SHA-256 digests | `private_key_pem` *(req)*, `cert_or_csr_pem` *(req)*, `password` | `dict` (`matched`, `key_hash`, `cert_hash`, `message`) |
+| `keypair_passphrase` | Keypair | Generate EFF-style multi-word cryptographic passphrase | `words` (default: 4), `separator` (default: "-"), `capitalize`, `include_numbers`, `include_special` | `dict` (`passphrase`) |
+| `keypair_rsa` | Keypair | Generate PKCS#8 RSA keypair (private mode 0600, public mode 0644) | `key_size` (default: 2048), `password`, `output_path`, `force` | `dict` (`private_key_pem`, `public_key_pem`, `saved_files`) |
+| `keypair_ssh` | Keypair | Generate OpenSSH keypair (`ed25519` or `rsa`) | `key_type` (default: "ed25519"), `key_size`, `comment`, `password`, `output_path`, `force` | `dict` (`private_key`, `public_key`, `saved_files`) |
+| `keypair_pgp` | Keypair | Generate ASCII-armored PGP keypair via GnuPG in isolated keyring | `name` *(req)*, `email` *(req)*, `comment`, `expire_years` (default: 1), `password`, `output_dir`, `force` | `dict` (`fingerprint`, `private_key`, `public_key`, `saved_files`) |
+| `ssl_check` | SSL/TLS | Inspect remote TLS endpoint validity, cipher, TLS version, and expiration | `host` *(req)*, `port` (default: 443), `timeout` (default: 10.0) | `dict` (`host`, `port`, `subject`, `issuer`, `valid_from`, `valid_to`, `days_remaining`, `is_expired`, `sans`, `tls_version`, `cipher_suite`, `warnings`, `chain_valid`) |
+| `ssl_headers` | SSL/TLS | Audit and score HTTP security response headers with actionable recommendations | `url` *(req)*, `timeout` (default: 10.0) | `dict` (`url`, `status_code`, `present_headers`, `missing_headers`, `score`, `recommendations`) |
+| `config_generate` | Config | Generate hardened server TLS configuration block (Nginx, Apache, Caddy) | `server` *(req: "nginx"\|"apache"\|"caddy")*, `profile` (default: "intermediate"), `domain`, `cert_path`, `key_path`, `hsts`, `output_path`, `force` | `dict` (`server`, `profile`, `config`, `saved_to`) |
+| `adcs_sign` | ADCS | Submit CSR to Microsoft ADCS Web Enrollment and retrieve cert (optional PFX) | `server` *(req)*, `csr_pem` *(req)*, `template` (default: "WebServer"), `username`, `password`, `auth_method` ("ntlm"\|"basic"), `ca_file`, `insecure`, `timeout`, `private_key_pem`, `pfx_password`, `output_cert_path`, `output_pfx_path`, `force` | `dict` (`status`: "issued"\|"pending"\|"error", `req_id`, `cert_pem`, `pfx_base64`, `saved_files`, `message`, `error`) |
+| `adcs_retrieve` | ADCS | Download approved certificate by Request ID (optional PFX assembly) | `server` *(req)*, `req_id` *(req)*, `username`, `password`, `auth_method`, `ca_file`, `insecure`, `timeout`, `private_key_pem`, `pfx_password`, `output_cert_path`, `output_pfx_path`, `force` | `dict` (`status`: "retrieved"\|"pending"\|"error", `req_id`, `cert_pem`, `pfx_base64`, `saved_files`, `message`, `error`) |
+| `adcs_ca_cert` | ADCS | Download Enterprise CA certificate chain (`.p7b` PKCS#7 format) | `server` *(req)*, `username`, `password`, `auth_method`, `ca_file`, `insecure`, `timeout`, `output_path`, `force` | `dict` (`status`: "success"\|"error", `ca_data`, `ca_cert_p7b_base64`, `saved_to`, `saved_files`, `error`) |
+
+### Security & In-Memory Guarantees
+
+The MCP server subsystem is built with defense-in-depth guarantees specifically designed for AI agents:
+1. **In-Memory Operations**: When file paths are omitted, keys, certificates, and archives are returned in memory as PEM strings and base64 payloads without writing temporary files to disk.
+2. **Restrictive File Permissions (`0600`)**: When `output_dir` or `output_path` is specified, private keys (`.key`, `private.asc`, OpenSSH private keys) and PKCS#12 archives (`.pfx`) are created using `os.open` with `0o600` flags so only the current user can access them. Public files (CSRs, public keys, certificates, web configs) are created with `0o644`.
+3. **Upfront Overwrite Protection**: If destination file paths already exist, tools raise a `FileExistsError` immediately before performing any cryptographic or network operations, preventing accidental data loss unless `force=True` is explicitly passed.
+4. **Structured Error Handling**: ADCS approval pending states return `status: "pending"` containing the `req_id` and next-step instructions rather than failing the agent turn, allowing AI assistants to reason about multi-stage workflows naturally.
+
+---
+
 ## Development & Testing
 
 ### Running Tests
@@ -741,7 +934,11 @@ ittools/
 │       │       ├── adcs.py      # 'ittools adcs' commands
 │       │       ├── keypair.py   # 'ittools keypair' commands
 │       │       ├── ssl.py       # 'ittools ssl' commands
-│       │       └── config.py    # 'ittools config' commands
+│       │       ├── config.py    # 'ittools config' commands
+│       │       └── mcp_cmd.py   # 'ittools mcp' command
+│       ├── mcp/                 # Model Context Protocol (MCP) server & tools
+│       │   ├── server.py        # MCPServer instance & transport runner
+│       │   └── tools/           # 15 MCP tool definitions (PKI, ADCS, SSL, keys, config)
 │       └── core/
 │           ├── pki/             # CSR generation, decoding, key matching & PFX bundles
 │           ├── adcs/            # Microsoft ADCS Web Enrollment client & exceptions
