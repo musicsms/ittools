@@ -167,3 +167,7 @@ def check_remote_ssl(
         warning=warning,
         is_valid_chain=info.get("is_valid_chain", True),
     )
+
+
+inspect_ssl_cert = check_remote_ssl
+
