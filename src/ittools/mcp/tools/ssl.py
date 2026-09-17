@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 
-from ittools.core.ssl_check.checker import inspect_ssl_cert
-from ittools.core.ssl_check.headers import analyze_security_headers
+from ittools.core.ssl_check.checker import check_remote_ssl
+from ittools.core.ssl_check.headers import check_security_headers
 
 
 def ssl_check(
@@ -29,7 +29,7 @@ def ssl_check(
         ValueError: If no peer certificate was received.
         OSError: If connection or TLS handshake fails.
     """
-    report = inspect_ssl_cert(host=host, port=port, timeout=timeout)
+    report = check_remote_ssl(host=host, port=port, timeout=timeout)
     return dataclasses.asdict(report)
 
 
@@ -51,5 +51,5 @@ def ssl_headers(
     Raises:
         requests.RequestException: If the HTTP request fails or times out.
     """
-    report = analyze_security_headers(url=url, timeout=timeout)
+    report = check_security_headers(url=url, timeout=timeout)
     return dataclasses.asdict(report)

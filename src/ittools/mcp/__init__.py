@@ -8,6 +8,10 @@ __all__ = ["tools", "create_mcp_server", "run_mcp_server"]
 
 
 def __getattr__(name: str) -> Any:
+    if name == "tools":
+        from ittools.mcp import tools
+
+        return tools
     if name in ("create_mcp_server", "run_mcp_server"):
         from ittools.mcp.server import create_mcp_server, run_mcp_server
 

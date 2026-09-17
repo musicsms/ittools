@@ -120,6 +120,3 @@ def check_security_headers(
         recommendations=recommendations,
     )
 
-
-analyze_security_headers = check_security_headers
-

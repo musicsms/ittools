@@ -73,5 +73,7 @@ def run_mcp_server(transport: str = "stdio", port: int = 8000) -> None:
     server = create_mcp_server()
     if transport == "sse":
         server.run(transport="sse", port=port)
-    else:
+    elif transport == "stdio":
         server.run(transport="stdio")
+    else:
+        raise ValueError(f"Unsupported transport: {transport} (expected 'stdio' or 'sse')")

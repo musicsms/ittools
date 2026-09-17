@@ -981,4 +981,51 @@ def test_run_mcp_server_execution():
         mock_server_sse.run.assert_called_once_with(transport="sse", port=9999)
 
 
+def test_mcp_module_attribute_access():
+    """Verify ittools.mcp exposes tools, create_mcp_server, and run_mcp_server attributes."""
+    import ittools.mcp
+
+    assert hasattr(ittools.mcp, "tools")
+    assert hasattr(ittools.mcp, "create_mcp_server")
+    assert hasattr(ittools.mcp, "run_mcp_server")
+    with pytest.raises(AttributeError, match="has no attribute 'nonexistent'"):
+        _ = ittools.mcp.nonexistent
+
+
+def test_pfx_extract_error_message_truncation():
+    """Verify pfx_extract truncates long invalid base64 payloads to at most 50 characters in the error message."""
+    long_invalid_payload = "!@#$%^&*()_+" * 10
+    with pytest.raises(ValueError) as exc_info:
+        pfx_extract(long_invalid_payload)
+    err_msg = str(exc_info.value)
+    expected_preview = long_invalid_payload[:50] + "..."
+    assert f"File not found or invalid base64 PFX data: {expected_preview}" in err_msg
+
+
+def test_run_mcp_server_unsupported_transport():
+    """Verify run_mcp_server raises ValueError when given an unsupported transport."""
+    from unittest.mock import MagicMock
+    from ittools.mcp.server import run_mcp_server
+
+    mock_server = MagicMock()
+    with patch("ittools.mcp.server.create_mcp_server", return_value=mock_server):
+        with pytest.raises(ValueError, match="Unsupported transport: websocket"):
+            run_mcp_server(transport="websocket")
+
+
+def test_mcp_main_entry_point():
+    """Verify python -m ittools.mcp invokes main(['mcp', ...])."""
+    import subprocess
+
+    result = subprocess.run(
+        [sys.executable, "-m", "ittools.mcp", "--help"],
+        capture_output=True,
+        text=True,
+        cwd="/home/bobbab/orca/workspaces/it-tools/fork-to-python",
+    )
+    assert result.returncode == 0
+    assert "Run the native Model Context Protocol (MCP) server" in result.stdout
+    assert "--transport" in result.stdout
+
+
 

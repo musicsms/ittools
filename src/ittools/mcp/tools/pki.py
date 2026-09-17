@@ -274,7 +274,8 @@ def pfx_extract(
         try:
             pfx_bytes = base64.b64decode(pfx_data_or_path, validate=True)
         except Exception:
-            raise ValueError(f"File not found or invalid base64 PFX data: {pfx_data_or_path}")
+            preview = pfx_data_or_path[:50] + ("..." if len(pfx_data_or_path) > 50 else "")
+            raise ValueError(f"File not found or invalid base64 PFX data: {preview}")
 
     result = extract_pfx_bundle(pfx_bytes, password=password)
 

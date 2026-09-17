@@ -9,12 +9,10 @@ import re
 from ittools.core.adcs.client import ADCSClient
 from ittools.core.adcs.exceptions import (
     ADCSAuthError,
-    ADCSAuthenticationError,
     ADCSConnectionError,
     ADCSError,
     ADCSPendingError,
     ADCSRequestDeniedError,
-    ADCSRequestError,
 )
 from ittools.core.pki.pfx import create_pfx_bundle
 from ittools.mcp.tools.pki import _write_public_file, _write_secure_file
