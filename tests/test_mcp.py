@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
+from unittest.mock import patch
 import pytest
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from ittools.core.adcs.client import ADCSResult
+from ittools.core.adcs.exceptions import (
+    ADCSAuthError,
+    ADCSConnectionError,
+    ADCSError,
+    ADCSPendingError,
+)
+from ittools.core.pki.pfx import extract_pfx_bundle
+from ittools.mcp.tools.adcs import adcs_ca_cert, adcs_retrieve, adcs_sign
 from ittools.mcp.tools.config import config_generate
 from ittools.mcp.tools.keypair import (
     keypair_passphrase,
@@ -578,4 +589,277 @@ def test_mcp_config_generate(tmp_path: Path):
     # 5. Unsupported server raises ValueError
     with pytest.raises(ValueError, match="Unsupported server"):
         config_generate(server="unknown_server")
+
+
+def test_mcp_adcs_sign_issued(tmp_path: Path):
+    """Verify adcs_sign handles issued certificates, optional PFX creation, and file persistence."""
+    fake_csr = (
+        "-----BEGIN CERTIFICATE REQUEST-----\n"
+        "MIICvDCCAaQCAQAwdzELMAkGA1UEBhMCVVMxEzARBgNVBAgMCkNhbGlmb3JuaWEx\n"
+        "-----END CERTIFICATE REQUEST-----\n"
+    )
+    fake_cert = (
+        "-----BEGIN CERTIFICATE-----\n"
+        "MIIDazCCAlOgAwIBAgIUQfakecert...\n"
+        "-----END CERTIFICATE-----\n"
+    )
+
+    # 1. In-memory issuance without PFX
+    with patch("ittools.core.adcs.client.ADCSClient.submit_csr") as mock_submit:
+        mock_submit.return_value = ADCSResult(req_id="101", cert_pem=fake_cert)
+        res = adcs_sign(server="adcs.corp.local", csr_pem=fake_csr, template="WebServer")
+
+        assert isinstance(res, dict)
+        assert res["status"] == "issued"
+        assert res["req_id"] == "101"
+        assert res["cert_pem"] == fake_cert
+        assert res["pfx_base64"] is None
+        assert res["saved_files"] == []
+        mock_submit.assert_called_once_with(csr_pem=fake_csr, template="WebServer")
+
+    # 2. In-memory issuance WITH PFX assembly
+    key_pem, real_cert_pem = _generate_test_key_and_cert("issued.test.local")
+    with patch("ittools.core.adcs.client.ADCSClient.submit_csr") as mock_submit:
+        mock_submit.return_value = ADCSResult(req_id="102", cert_pem=real_cert_pem)
+        res_pfx = adcs_sign(
+            server="adcs.corp.local",
+            csr_pem=fake_csr,
+            private_key_pem=key_pem,
+            pfx_password="testpassword",
+        )
+
+        assert res_pfx["status"] == "issued"
+        assert res_pfx["req_id"] == "102"
+        assert res_pfx["cert_pem"] == real_cert_pem
+        assert res_pfx["pfx_base64"] is not None
+        assert len(res_pfx["pfx_base64"]) > 0
+        extracted = extract_pfx_bundle(
+            base64.b64decode(res_pfx["pfx_base64"]),
+            password="testpassword",
+        )
+        assert extracted.private_key_pem is not None
+        assert extracted.cert_pem is not None
+
+    # 3. File output with 0644 for cert and 0600 for PFX
+    cert_path = tmp_path / "web.crt"
+    pfx_path = tmp_path / "web.pfx"
+
+    with patch("ittools.core.adcs.client.ADCSClient.submit_csr") as mock_submit:
+        mock_submit.return_value = ADCSResult(req_id="103", cert_pem=real_cert_pem)
+        res_file = adcs_sign(
+            server="adcs.corp.local",
+            csr_pem=fake_csr,
+            private_key_pem=key_pem,
+            pfx_password="testpassword",
+            output_cert_path=str(cert_path),
+            output_pfx_path=str(pfx_path),
+        )
+
+        assert cert_path.exists()
+        assert pfx_path.exists()
+        assert cert_path.read_text(encoding="utf-8") == real_cert_pem
+        assert (os.stat(cert_path).st_mode & 0o777) == 0o644
+        assert (os.stat(pfx_path).st_mode & 0o777) == 0o600
+        assert str(cert_path) in res_file["saved_files"]
+        assert str(pfx_path) in res_file["saved_files"]
+
+    # 4. Overwrite protection: force=False raises FileExistsError upfront without network calls
+    with patch("ittools.core.adcs.client.ADCSClient.submit_csr") as mock_submit:
+        with pytest.raises(FileExistsError, match="Target file already exists"):
+            adcs_sign(
+                server="adcs.corp.local",
+                csr_pem=fake_csr,
+                output_cert_path=str(cert_path),
+                force=False,
+            )
+        mock_submit.assert_not_called()
+
+    # 5. Overwrite allowed with force=True
+    with patch("ittools.core.adcs.client.ADCSClient.submit_csr") as mock_submit:
+        mock_submit.return_value = ADCSResult(req_id="104", cert_pem=real_cert_pem)
+        res_forced = adcs_sign(
+            server="adcs.corp.local",
+            csr_pem=fake_csr,
+            output_cert_path=str(cert_path),
+            force=True,
+        )
+        assert res_forced["status"] == "issued"
+        mock_submit.assert_called_once()
+
+
+def test_mcp_adcs_sign_pending():
+    """Verify adcs_sign handles ADCSPendingError returning pending status and req_id."""
+    fake_csr = "-----BEGIN CERTIFICATE REQUEST-----\nMIIC...\n-----END CERTIFICATE REQUEST-----\n"
+    with patch("ittools.core.adcs.client.ADCSClient.submit_csr") as mock_submit:
+        mock_submit.side_effect = ADCSPendingError("1042")
+        res = adcs_sign(server="adcs.corp.local", csr_pem=fake_csr)
+
+        assert isinstance(res, dict)
+        assert res["status"] == "pending"
+        assert res["req_id"] == "1042"
+        assert "1042" in res["message"]
+        assert "adcs_retrieve" in res["message"]
+
+
+def test_mcp_adcs_sign_connection_error():
+    """Verify adcs_sign catches connection and authentication errors and returns structured error dict."""
+    fake_csr = "-----BEGIN CERTIFICATE REQUEST-----\nMIIC...\n-----END CERTIFICATE REQUEST-----\n"
+
+    # Connection error
+    with patch("ittools.core.adcs.client.ADCSClient.submit_csr") as mock_submit:
+        mock_submit.side_effect = ADCSConnectionError("Failed to connect to adcs.corp.local:443")
+        res = adcs_sign(server="adcs.corp.local", csr_pem=fake_csr)
+
+        assert isinstance(res, dict)
+        assert res["status"] == "error"
+        assert "Failed to connect" in res["error"]
+
+    # Authentication error
+    with patch("ittools.core.adcs.client.ADCSClient.submit_csr") as mock_submit:
+        mock_submit.side_effect = ADCSAuthError("HTTP 401 Unauthorized")
+        res_auth = adcs_sign(server="adcs.corp.local", csr_pem=fake_csr)
+
+        assert res_auth["status"] == "error"
+        assert "HTTP 401" in res_auth["error"]
+
+    # General ADCSError
+    with patch("ittools.core.adcs.client.ADCSClient.submit_csr") as mock_submit:
+        mock_submit.side_effect = ADCSError("Request failed unexpectedly")
+        res_err = adcs_sign(server="adcs.corp.local", csr_pem=fake_csr)
+
+        assert res_err["status"] == "error"
+        assert "Request failed unexpectedly" in res_err["error"]
+
+
+def test_mcp_adcs_retrieve(tmp_path: Path):
+    """Verify adcs_retrieve handles certificate retrieval, PFX assembly, pending state, and errors."""
+    key_pem, real_cert_pem = _generate_test_key_and_cert("retrieved.test.local")
+
+    # 1. In-memory retrieval without PFX
+    with patch("ittools.core.adcs.client.ADCSClient.retrieve_cert") as mock_ret:
+        mock_ret.return_value = real_cert_pem
+        res = adcs_retrieve(server="adcs.corp.local", req_id="1050")
+
+        assert isinstance(res, dict)
+        assert res["status"] == "retrieved"
+        assert res["req_id"] == "1050"
+        assert res["cert_pem"] == real_cert_pem
+        assert res["pfx_base64"] is None
+        assert res["saved_files"] == []
+
+    # 2. Retrieval with PFX assembly and file saving
+    cert_path = tmp_path / "retrieved.crt"
+    pfx_path = tmp_path / "retrieved.pfx"
+
+    with patch("ittools.core.adcs.client.ADCSClient.retrieve_cert") as mock_ret:
+        mock_ret.return_value = real_cert_pem
+        res_file = adcs_retrieve(
+            server="adcs.corp.local",
+            req_id="1050",
+            private_key_pem=key_pem,
+            pfx_password="secretpassword",
+            output_cert_path=str(cert_path),
+            output_pfx_path=str(pfx_path),
+        )
+
+        assert res_file["status"] == "retrieved"
+        assert res_file["pfx_base64"] is not None
+        assert cert_path.exists()
+        assert pfx_path.exists()
+        assert (os.stat(cert_path).st_mode & 0o777) == 0o644
+        assert (os.stat(pfx_path).st_mode & 0o777) == 0o600
+        assert str(cert_path) in res_file["saved_files"]
+        assert str(pfx_path) in res_file["saved_files"]
+
+    # 3. Overwrite protection upfront
+    with patch("ittools.core.adcs.client.ADCSClient.retrieve_cert") as mock_ret:
+        with pytest.raises(FileExistsError, match="Target file already exists"):
+            adcs_retrieve(
+                server="adcs.corp.local",
+                req_id="1050",
+                output_cert_path=str(cert_path),
+                force=False,
+            )
+        mock_ret.assert_not_called()
+
+    # 4. Overwrite allowed with force=True
+    with patch("ittools.core.adcs.client.ADCSClient.retrieve_cert") as mock_ret:
+        mock_ret.return_value = real_cert_pem
+        res_forced = adcs_retrieve(
+            server="adcs.corp.local",
+            req_id="1050",
+            output_cert_path=str(cert_path),
+            force=True,
+        )
+        assert res_forced["status"] == "retrieved"
+
+    # 5. Pending request handling
+    with patch("ittools.core.adcs.client.ADCSClient.retrieve_cert") as mock_ret:
+        mock_ret.side_effect = ADCSPendingError("1050")
+        res_pending = adcs_retrieve(server="adcs.corp.local", req_id="1050")
+        assert res_pending["status"] == "pending"
+        assert res_pending["req_id"] == "1050"
+
+    # 6. Connection error handling
+    with patch("ittools.core.adcs.client.ADCSClient.retrieve_cert") as mock_ret:
+        mock_ret.side_effect = ADCSConnectionError("Host is unreachable")
+        res_err = adcs_retrieve(server="adcs.corp.local", req_id="1050")
+        assert res_err["status"] == "error"
+        assert "Host is unreachable" in res_err["error"]
+
+
+def test_mcp_adcs_ca_cert(tmp_path: Path):
+    """Verify adcs_ca_cert downloads CA bundle and supports file saving and error handling."""
+    fake_p7b = (
+        "-----BEGIN PKCS7-----\n"
+        "MIIFzAYJKoZIhvcNAQcCoIIFvTCCBbkCAQExADALBgkqhkiG9w0BBwGgggWpMIIF\n"
+        "-----END PKCS7-----\n"
+    )
+
+    # 1. In-memory CA cert download
+    with patch("ittools.core.adcs.client.ADCSClient.get_ca_cert") as mock_ca:
+        mock_ca.return_value = fake_p7b
+        res = adcs_ca_cert(server="adcs.corp.local")
+
+        assert isinstance(res, dict)
+        assert res["status"] == "success"
+        assert res["ca_data"] == fake_p7b
+        assert res["ca_cert_p7b_base64"] is not None
+        assert res["saved_to"] is None
+        assert res["saved_files"] == []
+        mock_ca.assert_called_once_with()
+
+    # 2. File output with mode 0644
+    ca_path = tmp_path / "corp_ca.p7b"
+    with patch("ittools.core.adcs.client.ADCSClient.get_ca_cert") as mock_ca:
+        mock_ca.return_value = fake_p7b
+        res_file = adcs_ca_cert(server="adcs.corp.local", output_path=str(ca_path))
+
+        assert res_file["status"] == "success"
+        assert res_file["saved_to"] == str(ca_path)
+        assert str(ca_path) in res_file["saved_files"]
+        assert ca_path.exists()
+        assert ca_path.read_text(encoding="utf-8") == fake_p7b
+        assert (os.stat(ca_path).st_mode & 0o777) == 0o644
+
+    # 3. Overwrite protection
+    with patch("ittools.core.adcs.client.ADCSClient.get_ca_cert") as mock_ca:
+        with pytest.raises(FileExistsError, match="Target file already exists"):
+            adcs_ca_cert(server="adcs.corp.local", output_path=str(ca_path), force=False)
+        mock_ca.assert_not_called()
+
+    # 4. Overwrite allowed with force=True
+    with patch("ittools.core.adcs.client.ADCSClient.get_ca_cert") as mock_ca:
+        mock_ca.return_value = fake_p7b
+        res_forced = adcs_ca_cert(server="adcs.corp.local", output_path=str(ca_path), force=True)
+        assert res_forced["status"] == "success"
+        assert res_forced["saved_to"] == str(ca_path)
+
+    # 5. Connection error handling
+    with patch("ittools.core.adcs.client.ADCSClient.get_ca_cert") as mock_ca:
+        mock_ca.side_effect = ADCSConnectionError("TLS handshake error")
+        res_err = adcs_ca_cert(server="adcs.corp.local")
+        assert res_err["status"] == "error"
+        assert "TLS handshake error" in res_err["error"]
+
 

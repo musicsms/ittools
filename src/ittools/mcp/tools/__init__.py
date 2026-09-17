@@ -1,5 +1,10 @@
 """MCP tools collection for ittools."""
 
+from ittools.mcp.tools.adcs import (
+    adcs_ca_cert,
+    adcs_retrieve,
+    adcs_sign,
+)
 from ittools.mcp.tools.config import config_generate
 from ittools.mcp.tools.keypair import (
     keypair_passphrase,
@@ -17,6 +22,9 @@ from ittools.mcp.tools.pki import (
 from ittools.mcp.tools.ssl import ssl_check, ssl_headers
 
 __all__ = [
+    "adcs_sign",
+    "adcs_retrieve",
+    "adcs_ca_cert",
     "csr_generate",
     "csr_decode",
     "pfx_create",
