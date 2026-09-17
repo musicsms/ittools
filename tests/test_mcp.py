@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
+import inspect
 import os
 from pathlib import Path
+import sys
 from unittest.mock import patch
 import pytest
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+
+from ittools.cli.main import main
 
 from ittools.core.adcs.client import ADCSResult
 from ittools.core.adcs.exceptions import (
@@ -861,5 +866,119 @@ def test_mcp_adcs_ca_cert(tmp_path: Path):
         res_err = adcs_ca_cert(server="adcs.corp.local")
         assert res_err["status"] == "error"
         assert "TLS handshake error" in res_err["error"]
+
+
+def test_mcp_server_lists_all_14_tools():
+    """Verify create_mcp_server registers all 15 MCP tools across PKI, Keypair, SSL, Config, and ADCS."""
+    from ittools.mcp.server import create_mcp_server
+
+    server = create_mcp_server()
+    assert server is not None
+
+    if inspect.iscoroutinefunction(getattr(server, "list_tools", None)):
+        tools = asyncio.run(server.list_tools())
+    elif callable(getattr(server, "list_tools", None)):
+        res = server.list_tools()
+        tools = asyncio.run(res) if inspect.iscoroutine(res) else res
+    elif hasattr(server, "tools"):
+        tools = server.tools
+    else:
+        pytest.fail("Cannot inspect tools on MCPServer instance")
+
+    tool_names = set()
+    for t in tools:
+        if hasattr(t, "name"):
+            tool_names.add(t.name)
+        elif isinstance(t, dict) and "name" in t:
+            tool_names.add(t["name"])
+        elif isinstance(t, str):
+            tool_names.add(t)
+
+    expected_tools = {
+        # PKI
+        "csr_generate",
+        "csr_decode",
+        "pfx_create",
+        "pfx_extract",
+        "ssl_match",
+        # Keypair
+        "keypair_passphrase",
+        "keypair_rsa",
+        "keypair_ssh",
+        "keypair_pgp",
+        # SSL
+        "ssl_check",
+        "ssl_headers",
+        # Config
+        "config_generate",
+        # ADCS
+        "adcs_sign",
+        "adcs_retrieve",
+        "adcs_ca_cert",
+    }
+
+    assert tool_names == expected_tools
+    assert len(tool_names) == 15
+
+
+test_mcp_server_lists_all_tools = test_mcp_server_lists_all_14_tools
+
+
+def test_cli_mcp_help(capsys):
+    """Verify ittools mcp --help displays usage and arguments."""
+    ret = main(["mcp", "--help"])
+    assert ret == 0
+    captured = capsys.readouterr()
+    assert "--transport" in captured.out
+    assert "--port" in captured.out
+
+    # Also verify ittools top-level --help lists mcp
+    ret_top = main(["--help"])
+    assert ret_top == 0
+    captured_top = capsys.readouterr()
+    assert "mcp" in captured_top.out
+
+
+def test_cli_mcp_missing_dependency(capsys):
+    """Verify ittools mcp gracefully exits with code 1 and helpful message when mcp is missing."""
+    with patch.dict(sys.modules, {"ittools.mcp.server": None, "mcp": None, "mcp.server": None, "mcp.server.mcpserver": None}):
+        ret = main(["mcp"])
+        assert ret == 1
+        captured = capsys.readouterr()
+        assert "error: The 'mcp' package is required to run the MCP server." in captured.err
+        assert 'Install it with: pip install "ittools[mcp]"' in captured.err
+
+
+def test_cli_mcp_dispatch_stdio():
+    """Verify ittools mcp runs server with stdio transport by default."""
+    with patch("ittools.mcp.server.run_mcp_server") as mock_run:
+        ret = main(["mcp"])
+        assert ret == 0
+        mock_run.assert_called_once_with(transport="stdio", port=8000)
+
+
+def test_cli_mcp_dispatch_sse():
+    """Verify ittools mcp supports --transport sse and custom --port."""
+    with patch("ittools.mcp.server.run_mcp_server") as mock_run:
+        ret = main(["mcp", "--transport", "sse", "--port", "9090"])
+        assert ret == 0
+        mock_run.assert_called_once_with(transport="sse", port=9090)
+
+
+def test_run_mcp_server_execution():
+    """Verify run_mcp_server delegates to server.run with correct transport parameters."""
+    from unittest.mock import MagicMock
+    from ittools.mcp.server import run_mcp_server
+
+    mock_server = MagicMock()
+    with patch("ittools.mcp.server.create_mcp_server", return_value=mock_server):
+        run_mcp_server(transport="stdio", port=8000)
+        mock_server.run.assert_called_once_with(transport="stdio")
+
+    mock_server_sse = MagicMock()
+    with patch("ittools.mcp.server.create_mcp_server", return_value=mock_server_sse):
+        run_mcp_server(transport="sse", port=9999)
+        mock_server_sse.run.assert_called_once_with(transport="sse", port=9999)
+
 
 
