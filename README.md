@@ -2,17 +2,22 @@
 
 A command-line toolkit of IT, PKI, and SSL/TLS utilities organized as subcommands (similar to `git` or `kubectl`).
 
-`ittools` provides standard, reliable utilities for TLS certificate generation and decoding, cryptographic keypair creation (RSA, OpenSSH, PGP, and secure passphrases), remote SSL/TLS certificate and HTTP security header inspection, certificate/key matching, and hardened server TLS configuration generation adhering to Mozilla recommendations.
+`ittools` provides standard, reliable utilities for TLS certificate generation and decoding, PKCS#12 (PFX) container creation and extraction, Microsoft Active Directory Certificate Services (ADCS) Web Enrollment, cryptographic keypair creation (RSA, OpenSSH, PGP, and secure passphrases), remote SSL/TLS certificate and HTTP security header inspection, certificate/key matching, and hardened server TLS configuration generation adhering to Mozilla recommendations.
 
 ---
 
 ## Table of Contents
 
+- [Quick Reference](#quick-reference)
+- [End-to-End Enterprise Workflow](#end-to-end-enterprise-workflow)
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
   - [Install with pip](#install-with-pip)
   - [Run Without Installing](#run-without-installing)
-- [CLI Overview & Exit Codes](#cli-overview--exit-codes)
+- [CLI Architecture & Security](#cli-architecture--security)
+  - [Global Options](#global-options)
+  - [Security Guarantees & File Permissions](#security-guarantees--file-permissions)
+  - [Standard Exit Codes](#standard-exit-codes)
 - [Subcommands Reference](#subcommands-reference)
   - [PKI & CSR (`ittools csr`)](#pki--csr-ittools-csr)
     - [`csr generate`](#csr-generate)
@@ -20,7 +25,7 @@ A command-line toolkit of IT, PKI, and SSL/TLS utilities organized as subcommand
   - [PKCS#12 Archives (`ittools pfx`)](#pkcs12-archives-ittools-pfx)
     - [`pfx create`](#pfx-create)
     - [`pfx extract`](#pfx-extract)
-  - [ADCS Certificate Services (`ittools adcs`)](#adcs-certificate-services-ittools-adcs)
+  - [Active Directory Certificate Services (`ittools adcs`)](#active-directory-certificate-services-ittools-adcs)
     - [`adcs sign`](#adcs-sign)
     - [`adcs retrieve`](#adcs-retrieve)
     - [`adcs ca-cert`](#adcs-ca-cert)
@@ -36,6 +41,76 @@ A command-line toolkit of IT, PKI, and SSL/TLS utilities organized as subcommand
   - [Hardened Server TLS Config (`ittools config`)](#hardened-server-tls-config-ittools-config)
     - [`config generate`](#config-generate)
 - [Development & Testing](#development--testing)
+  - [Running Tests](#running-tests)
+  - [Project Structure](#project-structure)
+- [License](#license)
+
+---
+
+## Quick Reference
+
+| Command | Subcommand | Purpose | Key Flags |
+|---|---|---|---|
+| `ittools csr` | `generate` | Generate RSA private key & PKCS#10 CSR | `--cn`, `--san`, `--org`, `--key-size`, `--force` |
+| `ittools csr` | `decode` | Inspect & decode PEM CSR details | `--in` (or stdin) |
+| `ittools pfx` | `create` | Bundle private key, certificate, and CA chain into `.pfx` | `--key`, `--cert`, `--ca`, `--out`, `--password`, `--no-password` |
+| `ittools pfx` | `extract` | Extract key (0600 mode), cert, and CA chain from `.pfx` | `--in`, `--password`, `--out-dir`, `--key-out`, `--cert-out` |
+| `ittools adcs` | `sign` | Submit CSR to Microsoft ADCS & download cert (optional PFX) | `--server`, `--csr`, `--template`, `--username`, `--key`, `--out-pfx` |
+| `ittools adcs` | `retrieve` | Download approved certificate by Request ID (optional PFX) | `--server`, `--req-id`, `--username`, `--key`, `--out-pfx` |
+| `ittools adcs` | `ca-cert` | Download Enterprise CA certificate chain (`.p7b`) | `--server`, `--username`, `--out` |
+| `ittools keypair` | `passphrase` | Generate EFF-style cryptographic passphrase | `--words`, `--sep`, `--capitalize`, `--numbers`, `--special` |
+| `ittools keypair` | `rsa` | Generate PKCS#8 RSA keypair (2048/3072/4096-bit) | `--size`, `--password`, `--out`, `--force` |
+| `ittools keypair` | `ssh` | Generate OpenSSH keypair (Ed25519 or RSA) | `--type`, `--size`, `--comment`, `--password`, `--out` |
+| `ittools keypair` | `pgp` | Generate ASCII-armored PGP keypair via GnuPG | `--name`, `--email`, `--comment`, `--expire`, `--out-dir` |
+| `ittools ssl` | `check` | Inspect remote TLS endpoint validity, cipher & expiration | `host`, `--port`, `--timeout`, `--json` |
+| `ittools ssl` | `headers` | Audit and score HTTP security response headers | `url`, `--timeout`, `--json` |
+| `ittools ssl` | `match` | Verify private key matches public cert or CSR | `--key`, `--cert`, `--password` |
+| `ittools config` | `generate` | Generate Mozilla TLS config for Nginx, Apache, Caddy | `--server`, `--profile`, `--domain`, `--cert`, `--key`, `--no-hsts` |
+
+---
+
+## End-to-End Enterprise Workflow
+
+`ittools` simplifies the full certificate lifecycle into a unified, secure toolchain:
+
+```bash
+# 1. Generate CSR and 2048-bit RSA Private Key
+ittools csr generate \
+  --cn "api.corp.local" \
+  --org "Enterprise IT" \
+  --san "api.corp.local,api-backup.corp.local" \
+  --output-dir ./output
+
+# 2. Submit CSR to Microsoft ADCS, download cert, and directly assemble a PFX bundle in one step
+ittools adcs sign \
+  --server ca.corp.local \
+  --csr output/api.corp.local/api.corp.local.csr \
+  --key output/api.corp.local/api.corp.local.key \
+  --out output/api.corp.local/api.corp.local.cer \
+  --out-pfx output/api.corp.local/api.corp.local.pfx \
+  --pfx-password "SecretPass123" \
+  --name "API Server Certificate" \
+  --username "CORP\admin"
+
+# 3. Deploy to server: Extract components with secure 0600 private key permissions
+ittools pfx extract \
+  --in output/api.corp.local/api.corp.local.pfx \
+  --password "SecretPass123" \
+  --out-dir /etc/ssl/myapp
+
+# 4. Generate hardened Nginx virtual host configuration block
+ittools config generate \
+  --server nginx \
+  --profile intermediate \
+  --domain api.corp.local \
+  --cert /etc/ssl/myapp/api.corp.local.crt \
+  --key /etc/ssl/myapp/api.corp.local.key \
+  --out /etc/nginx/sites-available/api.conf
+
+# 5. Verify live deployment and security posture
+ittools ssl check api.corp.local
+ittools ssl headers https://api.corp.local
+```
 
 ---
 
@@ -72,7 +147,7 @@ To enable NTLM authentication for Active Directory ADCS enrollment:
 
 ```bash
 pip install -e ".[ntlm]"
-# or:
+# or directly:
 pip install requests-ntlm
 ```
 
@@ -91,7 +166,7 @@ python3 -m ittools.cli.main --help
 
 ---
 
-## CLI Overview & Exit Codes
+## CLI Architecture & Security
 
 ```
 ittools [--debug] <command> <subcommand> [options]
@@ -102,13 +177,19 @@ ittools [--debug] <command> <subcommand> [options]
 - `--help`, `-h`: Show help and usage for any command or subcommand.
 - `--debug`: Print full Python tracebacks when an unhandled error or exception occurs (default: writes clean, user-facing error message to stderr).
 
-### Exit Codes
+### Security Guarantees & File Permissions
+
+- **Restrictive Private Key Permissions (`0600`)**: All private key files written to disk (`.key`, `private.asc`, and keys extracted from `.pfx` archives) are created with `os.open` using `0o600` (`-rw-------`), ensuring only the owner can read them.
+- **Upfront Overwrite Protection**: Destructive overwrites are prevented by default. All target destination paths are inspected upfront before performing network calls or generating keys. Pass `--force` to explicitly permit overwriting existing files.
+- **Interactive Password Masking**: Sensitive passwords (for PFX archives, encrypted private keys, and Active Directory authentication) can be omitted from command line history and entered securely via `getpass` prompts.
+
+### Standard Exit Codes
 
 | Exit Code | Meaning | Context |
 |---|---|---|
 | `0` | Success | Command completed successfully; checks passed. |
-| `1` | Validation / User Error | Invalid arguments, missing required fields, or output file collision without `--force`. |
-| `2` | Network / Connection Error | Remote host unreachable, DNS lookup failed, or connection timed out. |
+| `1` | Validation / User Error | Invalid arguments, missing required fields, rejected CSR, or output file collision without `--force`. |
+| `2` | Network / Connection Error | Remote host unreachable, DNS lookup failed, ADCS connection failure, or connection timed out. |
 | `3` | Security Warning / Mismatch / Approval Pending | Remote SSL certificate expired or expiring within 30 days (`ssl check`), private key and certificate mismatch (`ssl match`), or ADCS certificate request pending CA administrator approval (`adcs sign`). |
 
 ---
@@ -258,7 +339,7 @@ ittools pfx extract \
 
 ---
 
-### ADCS Certificate Services (`ittools adcs`)
+### Active Directory Certificate Services (`ittools adcs`)
 
 Interact with Microsoft Active Directory Certificate Services (ADCS) Web Enrollment (`/certsrv/certfnsh.asp`) to submit Certificate Signing Requests, retrieve issued certificates, and download the Enterprise CA certificate chain. Supports NTLM and Basic authentication, custom CA bundles, and an all-in-one PFX assembly pipeline.
 
@@ -501,7 +582,7 @@ Inspect remote TLS endpoints, audit HTTP response security headers, and verify t
 
 #### `ssl check`
 
-Connects to a remote host over TLS, extracts the leaf certificate, and reports validity dates, issuer, cipher suite, and expiration warnings.
+Connects to a remote host over TLS, extracts the leaf certificate, and reports validity dates, issuer, cipher suite, protocol version, and expiration warnings. If the certificate is untrusted or self-signed, `ittools` gracefully falls back to an unverified TLS connection to inspect the certificate metadata while highlighting the chain validation status.
 
 ```bash
 ittools ssl check <host> [options]
@@ -558,24 +639,28 @@ ittools ssl headers https://example.com --json
 
 #### `ssl match`
 
-Verifies that a private key matches a public certificate or CSR by calculating and comparing their SHA-256 public key digests.
+Verifies that a private key matches a public certificate or CSR by calculating and comparing their SHA-256 public key digests. Supports password-protected encrypted private keys.
 
 ```bash
-ittools ssl match --key <private-key.pem> --cert <cert-or-csr.pem>
+ittools ssl match --key <private-key.pem> --cert <cert-or-csr.pem> [options]
 ```
 
 **Options:**
-- `--key KEY`: Path to PEM-encoded private key file.
-- `--cert CERT`: Path to PEM-encoded certificate or CSR file.
+- `--key KEY`: Path to PEM-encoded private key file (required).
+- `--cert CERT`: Path to PEM-encoded certificate or CSR file (required).
 - `--password PASSWORD`: Optional passphrase to decrypt private key if encrypted.
 
 **Exit Codes:**
 - `0`: Public key hashes match.
 - `3`: Hashes do not match (keypair mismatch).
 
-**Example:**
+**Examples:**
 ```bash
+# Check key matches CSR
 ittools ssl match --key output/example.com/example.com.key --cert output/example.com/example.com.csr
+
+# Check encrypted key matches certificate
+ittools ssl match --key encrypted.key --cert server.crt --password "SecretPass123"
 ```
 
 ---
@@ -634,7 +719,8 @@ The test suite covers core crypto libraries, parsers, CLI handlers, and edge cas
 pytest tests/ -v
 
 # Run a specific test module
-pytest tests/test_cli.py -v
+pytest tests/test_cli_adcs.py -v
+pytest tests/test_cli_pfx.py -v
 ```
 
 ### Project Structure
